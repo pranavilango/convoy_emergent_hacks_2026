@@ -116,12 +116,49 @@ describe("demo reducer", () => {
     s = reducer(s, { type: "removeLocation", id: "a" });
     expect(s.locations.map((l) => l.id)).toEqual(["b", "c"]);
   });
+
+  it("adds directed connections and rejects duplicates and invalid endpoints", () => {
+    const s = withLocations();
+    const connected = reducer(s, { type: "addConnection", id: "ab", fromId: "a", toId: "b" });
+    expect(connected.connections).toEqual([{ id: "ab", fromId: "a", toId: "b" }]);
+    expect(
+      reducer(connected, { type: "addConnection", id: "duplicate", fromId: "a", toId: "b" }),
+    ).toBe(connected);
+    expect(reducer(s, { type: "addConnection", id: "self", fromId: "a", toId: "a" })).toBe(s);
+    expect(reducer(s, { type: "addConnection", id: "missing", fromId: "a", toId: "missing" })).toBe(
+      s,
+    );
+    expect(
+      reducer(connected, { type: "addConnection", id: "ba", fromId: "b", toId: "a" }).connections,
+    ).toHaveLength(2);
+  });
+
+  it("removes connections when a location is removed", () => {
+    let s = withLocations();
+    s = reducer(s, { type: "addConnection", id: "ab", fromId: "a", toId: "b" });
+    s = reducer(s, { type: "addConnection", id: "bc", fromId: "b", toId: "c" });
+    s = reducer(s, { type: "removeLocation", id: "a" });
+    expect(s.connections.map((connection) => connection.id)).toEqual(["bc"]);
+  });
+
+  it("removes connections whose locations are deleted with a type", () => {
+    let s = withLocations();
+    s = reducer(s, { type: "addConnection", id: "ac", fromId: "a", toId: "c" });
+    s = reducer(s, { type: "removeType", id: "factory" });
+    expect(s.connections).toEqual([]);
+  });
 });
 
 describe("parseState", () => {
   it("round-trips valid state", () => {
     const s = withLocations();
     expect(parseState(JSON.parse(JSON.stringify(s)))).toEqual(s);
+  });
+
+  it("loads older saved state without connections", () => {
+    const s = withLocations();
+    const { connections: _connections, ...oldState } = s;
+    expect(parseState(oldState)).toEqual(s);
   });
 
   it("drops malformed records but keeps the rest", () => {
@@ -131,7 +168,16 @@ describe("parseState", () => {
     raw.locations.push({ ...raw.locations[0], id: "orphan", typeId: "missing" });
     raw.locations.push({ ...raw.locations[0], id: "far", lat: 200 });
     raw.locations.push(raw.locations[0]); // duplicate id
-    expect(parseState(raw)).toEqual(s);
+    raw.connections = [
+      { id: "valid", fromId: "a", toId: "b" },
+      { id: "self", fromId: "a", toId: "a" },
+      { id: "orphan", fromId: "a", toId: "missing" },
+      { id: "valid", fromId: "b", toId: "c" },
+    ];
+    expect(parseState(raw)).toEqual({
+      ...s,
+      connections: [{ id: "valid", fromId: "a", toId: "b" }],
+    });
   });
 
   it("returns null for things that aren't demo state", () => {

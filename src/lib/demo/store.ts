@@ -121,6 +121,14 @@ export const demoActions = {
   removeLocation(id: string) {
     dispatch({ type: "removeLocation", id });
   },
+  connectLocations(fromId: string, toId: string): string {
+    const id = newId();
+    dispatch({ type: "addConnection", id, fromId, toId });
+    return id;
+  },
+  removeConnection(id: string) {
+    dispatch({ type: "removeConnection", id });
+  },
 };
 
 /** Test helper: forget the in-memory copy so the next read comes from storage again. */

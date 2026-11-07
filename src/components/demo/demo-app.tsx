@@ -9,6 +9,7 @@ import type { Location, LocationType } from "@/lib/demo/types";
 
 import { AddLocationForm } from "./add-location-form";
 import { focusRing } from "./controls";
+import { ConnectionsManager } from "./connections-manager";
 import { LocationList } from "./location-list";
 import { LocationTypeManager } from "./location-type-manager";
 import { MapView, type FocusRequest } from "./map-view";
@@ -26,7 +27,7 @@ declare global {
 }
 
 export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) {
-  const { types, locations } = useDemoState();
+  const { types, locations, connections } = useDemoState();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [focus, setFocus] = useState<FocusRequest | null>(null);
   const [problem, setProblem] = useState<MapProblem | null>(apiKey ? null : "unconfigured");
@@ -59,13 +60,14 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
         searchAvailable={problem === null}
         onAdded={(id) => setSelectedId(id)}
       />
+      <LocationTypeManager types={types} locations={locations} />
       <LocationList
         locations={locations}
         types={types}
         selectedId={selected}
         onSelect={selectFromList}
       />
-      <LocationTypeManager types={types} locations={locations} />
+      <ConnectionsManager locations={locations} connections={connections} />
     </div>
   );
 
@@ -77,6 +79,7 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
         <MapView
           mapId={mapId || FALLBACK_MAP_ID}
           locations={locations}
+          connections={connections}
           types={types}
           selectedId={selected}
           focus={focus}

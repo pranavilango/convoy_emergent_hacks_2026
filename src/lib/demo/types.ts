@@ -18,9 +18,16 @@ export type Location = {
   createdAt: string;
 };
 
+export type Connection = {
+  id: string;
+  fromId: string;
+  toId: string;
+};
+
 export type DemoState = {
   types: LocationType[];
   locations: Location[];
+  connections: Connection[];
 };
 
 export type NewLocation = Omit<Location, "id" | "createdAt">;

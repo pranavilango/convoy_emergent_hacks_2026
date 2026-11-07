@@ -1,9 +1,9 @@
 "use client";
 
-import { AdvancedMarker, Map, useMap } from "@vis.gl/react-google-maps";
+import { AdvancedMarker, Map, Polyline, useMap } from "@vis.gl/react-google-maps";
 import { useEffect, useRef } from "react";
 
-import type { Location, LocationType } from "@/lib/demo/types";
+import type { Connection, Location, LocationType } from "@/lib/demo/types";
 import { cn } from "@/lib/utils";
 
 const DEFAULT_CENTER = { lat: 30, lng: 0 };
@@ -17,6 +17,7 @@ export type FocusRequest = { id: string; nonce: number };
 export function MapView({
   mapId,
   locations,
+  connections,
   types,
   selectedId,
   focus,
@@ -24,12 +25,14 @@ export function MapView({
 }: {
   mapId: string;
   locations: Location[];
+  connections: Connection[];
   types: LocationType[];
   selectedId: string | null;
   focus: FocusRequest | null;
   onSelect: (id: string | null) => void;
 }) {
   const typeById = new globalThis.Map(types.map((t) => [t.id, t]));
+  const locationById = new globalThis.Map(locations.map((location) => [location.id, location]));
 
   return (
     <Map
@@ -44,6 +47,36 @@ export function MapView({
       onClick={() => onSelect(null)}
       className="h-full w-full"
     >
+      {connections.map((connection) => {
+        const from = locationById.get(connection.fromId);
+        const to = locationById.get(connection.toId);
+        if (!from || !to) return null;
+        return (
+          <Polyline
+            key={connection.id}
+            path={[
+              { lat: from.lat, lng: from.lng },
+              { lat: to.lat, lng: to.lng },
+            ]}
+            strokeColor="#ce6c54"
+            strokeOpacity={0.9}
+            strokeWeight={2}
+            clickable={false}
+            icons={[
+              {
+                icon: {
+                  path: "M 0,-1 0,1 2,0 z",
+                  scale: 4,
+                  strokeColor: "#ce6c54",
+                  fillColor: "#ce6c54",
+                  fillOpacity: 1,
+                },
+                offset: "100%",
+              },
+            ]}
+          />
+        );
+      })}
       {locations.map((location) => {
         const type = typeById.get(location.typeId);
         if (!type) return null;

@@ -40,9 +40,9 @@ npm run dev        # http://localhost:3000
 ## Demo (`/demo`)
 
 "Try the demo" opens a map editor. Search an address, give it a type (Factory, Warehouse, Retail
-store, or your own), and it's pinned on the map. Everything is saved in the browser
-(`localStorage`, key `convoy.demo.v1`). Each visitor sees only their own data, and clearing site
-data resets it.
+store, or your own), and it's pinned on the map. Connect locations with one-way links to visualize
+the network. Everything is saved in the browser (`localStorage`, key `convoy.demo.v1`). Each
+visitor sees only their own data, and clearing site data resets it.
 
 - Page: `src/app/demo/page.tsx`. UI: `src/components/demo/`.
 - State: `src/lib/demo/`. `reducer.ts` holds the rules and `store.ts` handles saving. Swap
