@@ -14,15 +14,29 @@ fn iv(a: u8, b: u8) -> TimeInterval {
     TimeInterval::new(a, b).unwrap()
 }
 
+/// Degrees of latitude (or of longitude on the equator) spanning `km` kilometres.
+fn deg(km: f64) -> f64 {
+    km / (EARTH_RADIUS_KM * std::f64::consts::PI / 180.0)
+}
+
+/// `x`/`y` are kilometre offsets east/north of (0°, 0°), converted to lat/lon. Distances
+/// along an axis are exact; diagonal distances should be computed with `leg_hours`.
 fn meta(parents: &[usize], a: u8, b: u8, x: f64, y: f64) -> NodeMetadata {
     NodeMetadata {
         parents: NodeList(parents.iter().map(|&p| NodeId(p)).collect()),
         interval: iv(a, b),
-        coordinates: Coordinates(x, y),
+        coordinates: Coordinates { lat: deg(y), lon: deg(x) },
     }
 }
 
-/// Spec: (id, parents, open_start, open_end, x, y). Parents must precede children.
+/// Direct travel time in hours between two nodes of `g` (great-circle distance at 60 kph).
+fn leg_hours(g: &TransitGraph, a: usize, b: usize) -> f64 {
+    let ca = g.get_node(&NodeId(a)).unwrap().coordinates;
+    let cb = g.get_node(&NodeId(b)).unwrap().coordinates;
+    ca.distance_to(&cb) / 60.0
+}
+
+/// Spec: (id, parents, open_start, open_end, x_km_east, y_km_north). Parents must precede children.
 fn build(spec: &[(usize, &[usize], u8, u8, f64, f64)]) -> TransitGraph {
     let mut g = TransitGraph::new();
     for &(id, parents, a, b, x, y) in spec {
@@ -144,15 +158,48 @@ fn reference_arrivals(g: &TransitGraph, source: NodeId, start: f64) -> Vec<(Node
 // Coordinates
 // ------------------------------------------------------------------
 
+fn ll(lat: f64, lon: f64) -> Coordinates {
+    Coordinates { lat, lon }
+}
+
 #[test]
-fn distance_pythagorean_triple() {
-    approx(Coordinates(0.0, 0.0).distance_to(&Coordinates(3.0, 4.0)), 5.0);
+fn distance_one_degree_along_meridian_and_equator() {
+    let one_degree = EARTH_RADIUS_KM * std::f64::consts::PI / 180.0; // ~111.195 km
+    approx(ll(0.0, 0.0).distance_to(&ll(1.0, 0.0)), one_degree);
+    approx(ll(0.0, 0.0).distance_to(&ll(0.0, 1.0)), one_degree);
+    approx(ll(10.0, 20.0).distance_to(&ll(11.0, 20.0)), one_degree);
+}
+
+#[test]
+fn distance_longitude_shrinks_with_latitude() {
+    let at_equator = ll(0.0, 0.0).distance_to(&ll(0.0, 1.0));
+    let at_60 = ll(60.0, 0.0).distance_to(&ll(60.0, 1.0));
+    assert!((at_60 / at_equator - 0.5).abs() < 1e-3, "{at_60} vs {at_equator}");
+}
+
+#[test]
+fn distance_known_city_pair() {
+    // London -> Paris is about 344 km by great circle.
+    let london = ll(51.5074, -0.1278);
+    let paris = ll(48.8566, 2.3522);
+    let d = london.distance_to(&paris);
+    assert!((d - 344.0).abs() < 1.5, "{d}");
+}
+
+#[test]
+fn distance_wraps_antimeridian_and_spans_poles() {
+    let one_degree = EARTH_RADIUS_KM * std::f64::consts::PI / 180.0;
+    approx(ll(0.0, 179.5).distance_to(&ll(0.0, -179.5)), one_degree);
+    approx(
+        ll(90.0, 0.0).distance_to(&ll(-90.0, 0.0)),
+        std::f64::consts::PI * EARTH_RADIUS_KM,
+    );
 }
 
 #[test]
 fn distance_zero_and_symmetric() {
-    let a = Coordinates(1.5, -2.0);
-    let b = Coordinates(-4.0, 7.25);
+    let a = ll(41.82, -71.41);
+    let b = ll(-33.87, 151.21);
     approx(a.distance_to(&a), 0.0);
     approx(a.distance_to(&b), b.distance_to(&a));
 }
@@ -221,6 +268,25 @@ fn graph_rejects_bad_nodes() {
     assert!(g.add_node(NodeId(1), meta(&[1], 0, 24, 0.0, 0.0)).is_err()); // self parent
     assert!(g.add_node(NodeId(1), meta(&[], 0, 24, f64::NAN, 0.0)).is_err());
     assert_eq!(g.len(), 1);
+}
+
+#[test]
+fn graph_rejects_out_of_range_lat_lon() {
+    let mut g = TransitGraph::new();
+    let at = |lat: f64, lon: f64| NodeMetadata {
+        parents: NodeList(vec![]),
+        interval: iv(0, 24),
+        coordinates: Coordinates { lat, lon },
+    };
+    assert!(g.add_node(NodeId(0), at(90.1, 0.0)).is_err());
+    assert!(g.add_node(NodeId(0), at(-90.1, 0.0)).is_err());
+    assert!(g.add_node(NodeId(0), at(0.0, 180.1)).is_err());
+    assert!(g.add_node(NodeId(0), at(0.0, -180.1)).is_err());
+    assert!(g.add_node(NodeId(0), at(f64::INFINITY, 0.0)).is_err());
+    assert_eq!(g.len(), 0);
+    // The limits themselves are valid.
+    assert!(g.add_node(NodeId(0), at(90.0, 180.0)).is_ok());
+    assert!(g.add_node(NodeId(1), at(-90.0, -180.0)).is_ok());
 }
 
 #[test]
@@ -334,11 +400,22 @@ fn transit_waits_for_source_to_open() {
 
 #[test]
 fn transit_target_closes_before_arrival() {
-    // Arrive exactly at 10:00 but target is open on [0,10): closed on arrival.
+    // Target is open on [0,10); starting at 9.1 arrives at ~10.1: closed on arrival.
     let g = two_nodes((0, 24), (0, 10));
-    assert!(tt(&g, 0, 1, 9.0).is_none());
-    // Arriving at 9.99 is fine.
-    approx(tt(&g, 0, 1, 8.99).unwrap(), 1.0);
+    assert!(tt(&g, 0, 1, 9.1).is_none());
+    // Arriving at ~9.89 is fine.
+    approx(tt(&g, 0, 1, 8.89).unwrap(), 1.0);
+}
+
+#[test]
+fn transit_open_interval_end_is_exclusive_for_colocated_nodes() {
+    // Zero travel time makes the boundary exact: arriving at 10:00 sharp is too late.
+    let g = build(&[(0, &[], 0, 24, 0.0, 0.0), (1, &[0], 0, 10, 0.0, 0.0)]);
+    assert!(tt(&g, 0, 1, 10.0).is_none());
+    approx(tt(&g, 0, 1, 9.999).unwrap(), 0.0);
+    // And the start is inclusive: node 1 opening at 10 is usable at exactly 10:00.
+    let g = build(&[(0, &[], 0, 24, 0.0, 0.0), (1, &[0], 10, 24, 0.0, 0.0)]);
+    approx(tt(&g, 0, 1, 10.0).unwrap(), 0.0);
 }
 
 #[test]
@@ -352,7 +429,8 @@ fn transit_source_closed_forever_after_start() {
 fn transit_cannot_run_past_end_of_day() {
     let g = two_nodes((0, 24), (0, 24));
     assert!(tt(&g, 0, 1, 23.5).is_none()); // would arrive 24.5
-    assert!(tt(&g, 0, 1, 23.0).is_none()); // arrival at 24.0 is not < 24
+    assert!(tt(&g, 0, 1, 23.1).is_none()); // would arrive 24.1
+    approx(tt(&g, 0, 1, 22.5).unwrap(), 1.0); // arrives 23.5
 }
 
 #[test]
@@ -390,7 +468,7 @@ fn diamond(b_open: (u8, u8)) -> TransitGraph {
 
 #[test]
 fn transit_chooses_minimum_over_paths() {
-    // Via B: 0.5 + 0.5 = 1.0. Via C: 1.0 + sqrt(2) ~ 2.414.
+    // Via B: 0.5 + 0.5 = 1.0. Via C: 1.0 + the ~1.414 h diagonal ~ 2.414.
     let g = diamond((0, 24));
     approx(tt(&g, 0, 3, 9.0).unwrap(), 1.0);
 }
@@ -398,7 +476,7 @@ fn transit_chooses_minimum_over_paths() {
 #[test]
 fn transit_falls_back_to_slower_path_when_fast_one_blocked() {
     let g = diamond((0, 9)); // B closed from 9:00
-    approx(tt(&g, 0, 3, 9.0).unwrap(), 1.0 + 2f64.sqrt());
+    approx(tt(&g, 0, 3, 9.0).unwrap(), leg_hours(&g, 0, 2) + leg_hours(&g, 2, 3));
 }
 
 #[test]
@@ -523,7 +601,8 @@ fn optimizer_extends_hours_to_remove_waiting() {
 
 #[test]
 fn optimizer_adds_shortcut_edge_across_detour() {
-    // 0(0,0) -> 1(0,60) -> 2(60,0): going 0->2 via 1 takes 1 + sqrt(2) h, direct is 1 h.
+    // 0(0,0) -> 1(0,60) -> 2(60,0) in km offsets: going 0->2 via 1 takes ~1 + 1.414 h,
+    // while the direct leg is 1 h.
     let g = build(&[
         (0, &[], 0, 24, 0.0, 0.0),
         (1, &[0], 0, 24, 0.0, 60.0),
@@ -534,8 +613,9 @@ fn optimizer_adds_shortcut_edge_across_detour() {
         r.suggested_changes,
         vec![GraphChange::AddEdge { parent: NodeId(0), child: NodeId(2) }]
     );
-    approx(r.original_performance, (1.0 + 2f64.sqrt() + 1.0 + 2f64.sqrt()) / 3.0);
-    approx(r.optimized_performance, (1.0 + 2f64.sqrt() + 1.0) / 3.0);
+    let (t01, t12, t02) = (leg_hours(&g, 0, 1), leg_hours(&g, 1, 2), leg_hours(&g, 0, 2));
+    approx(r.original_performance, 2.0 * (t01 + t12) / 3.0);
+    approx(r.optimized_performance, (t01 + t12 + t02) / 3.0);
     assert!(r.optimized_performance < r.original_performance);
 }
 

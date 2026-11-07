@@ -5,8 +5,10 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 // 0. Constants
 // ==========================================
 
-/// Travel speed along every edge, in km/h. Coordinates are interpreted as km.
+/// Travel speed along every edge, in km/h.
 pub const TRAVEL_SPEED_KPH: f64 = 60.0;
+/// Mean Earth radius in km, used for great-circle distances.
+pub const EARTH_RADIUS_KM: f64 = 6371.0088;
 /// First and last (inclusive) integer start hours sampled for "business hours".
 pub const BUSINESS_START_HOUR: u32 = 9;
 pub const BUSINESS_END_HOUR: u32 = 17;
@@ -23,16 +25,24 @@ pub struct NodeId(pub usize);
 #[derive(Debug, Clone, Default)]
 pub struct NodeList(pub Vec<NodeId>);
 
-/// A safe wrapper for spatial coordinates.
+/// A geographic position in decimal degrees: latitude in [-90, 90] (north positive)
+/// and longitude in [-180, 180] (east positive). Range checks happen in
+/// `TransitGraph::add_node`.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Coordinates(pub f64, pub f64);
+pub struct Coordinates {
+    pub lat: f64,
+    pub lon: f64,
+}
 
 impl Coordinates {
-    /// Calculates the straight-line distance between two coordinates in kilometers.
+    /// Great-circle (haversine) distance between two coordinates in kilometers,
+    /// on a spherical Earth of radius `EARTH_RADIUS_KM`.
     pub fn distance_to(&self, other: &Coordinates) -> f64 {
-        let dx = self.0 - other.0;
-        let dy = self.1 - other.1;
-        (dx * dx + dy * dy).sqrt()
+        let (lat1, lat2) = (self.lat.to_radians(), other.lat.to_radians());
+        let dlat = lat2 - lat1;
+        let dlon = (other.lon - self.lon).to_radians();
+        let a = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
+        2.0 * EARTH_RADIUS_KM * a.sqrt().min(1.0).asin()
     }
 }
 
@@ -99,12 +109,16 @@ impl TransitGraph {
 
     /// Inserts (or replaces) a node.
     ///
-    /// Validation: coordinates must be finite, every parent must already exist in the
-    /// graph, a node cannot be its own parent, and the result must remain acyclic
+    /// Validation: coordinates must be finite and a valid latitude/longitude, every
+    /// parent must already exist in the graph, a node cannot be its own parent, and the result must remain acyclic
     /// (on failure the graph is left unchanged). Duplicate parents are collapsed.
     pub fn add_node(&mut self, id: NodeId, mut meta: NodeMetadata) -> Result<(), &'static str> {
-        if !meta.coordinates.0.is_finite() || !meta.coordinates.1.is_finite() {
+        let c = meta.coordinates;
+        if !c.lat.is_finite() || !c.lon.is_finite() {
             return Err("Coordinates must be finite");
+        }
+        if !(-90.0..=90.0).contains(&c.lat) || !(-180.0..=180.0).contains(&c.lon) {
+            return Err("Latitude must be in [-90, 90] and longitude in [-180, 180]");
         }
         let mut seen = HashSet::new();
         meta.parents.0.retain(|p| seen.insert(*p));
@@ -586,7 +600,8 @@ impl TransitAnalyzer for GraphService {
                     if s.average() > cur_stats.average() - self.config.min_improvement {
                         continue;
                     }
-                    if best.as_ref().map_or(true, |(_, _, b)| s.average() < b.average()) {
+                    // Scores within 1e-12 are ties (floating-point noise); keep the earlier candidate.
+                    if best.as_ref().map_or(true, |(_, _, b)| s.average() < b.average() - 1e-12) {
                         best = Some((cand, g, s));
                     }
                 }

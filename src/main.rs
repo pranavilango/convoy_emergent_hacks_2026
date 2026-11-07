@@ -52,12 +52,12 @@ struct HoursDto {
     end: u8,
 }
 
-/// Position in kilometres.
+/// Position in decimal degrees: latitude in [-90, 90], longitude in [-180, 180].
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CoordinatesDto {
-    x: f64,
-    y: f64,
+    lat: f64,
+    lon: f64,
 }
 
 /// One node of the network. Travel is possible from each parent to this node.
@@ -248,7 +248,7 @@ fn to_metadata(n: &NodeDto) -> Result<NodeMetadata, String> {
     Ok(NodeMetadata {
         parents: NodeList(n.parents.iter().map(|&p| NodeId(p)).collect()),
         interval,
-        coordinates: Coordinates(n.coordinates.x, n.coordinates.y),
+        coordinates: Coordinates { lat: n.coordinates.lat, lon: n.coordinates.lon },
     })
 }
 
@@ -314,7 +314,7 @@ fn graph_to_network(graph: &TransitGraph) -> NetworkFile {
                 id: id.0,
                 parents,
                 hours: HoursDto { start: m.interval.start(), end: m.interval.end() },
-                coordinates: CoordinatesDto { x: m.coordinates.0, y: m.coordinates.1 },
+                coordinates: CoordinatesDto { lat: m.coordinates.lat, lon: m.coordinates.lon },
             }
         })
         .collect();
@@ -539,9 +539,9 @@ fn app(state: Arc<AppState>) -> Router {
 #[tokio::main]
 async fn main() {
     let addr: SocketAddr = std::env::var("TRANSIT_ADDR")
-        .unwrap_or_else(|_| "127.0.0.1:3001".to_string())
+        .unwrap_or_else(|_| "127.0.0.1:3000".to_string())
         .parse()
-        .expect("TRANSIT_ADDR must be a socket address like 127.0.0.1:3001");
+        .expect("TRANSIT_ADDR must be a socket address like 127.0.0.1:3000");
     let storage_dir = PathBuf::from(
         std::env::var("TRANSIT_STORAGE_DIR").unwrap_or_else(|_| "networks".to_string()),
     );
@@ -624,9 +624,15 @@ mod tests {
         }
     }
 
+    /// Degrees of latitude (or of longitude on the equator) spanning `km` kilometres.
+    fn deg(km: f64) -> f64 {
+        km / (transit::EARTH_RADIUS_KM * std::f64::consts::PI / 180.0)
+    }
+
+    /// `x`/`y` are kilometre offsets east/north of (0°, 0°), converted to lat/lon.
     fn node(id: usize, parents: &[usize], start: u8, end: u8, x: f64, y: f64) -> Value {
         json!({"id": id, "parents": parents, "hours": {"start": start, "end": end},
-               "coordinates": {"x": x, "y": y}})
+               "coordinates": {"lat": deg(y), "lon": deg(x)}})
     }
 
     /// 0(0,0) -> 1(0,60) -> 2(60,0): a detour where a direct 0 -> 2 edge helps.
@@ -676,6 +682,9 @@ mod tests {
         assert!(bad(json!({"nodes": [node(0, &[], 10, 10, 0.0, 0.0)]})).contains("Invalid interval"));
         assert!(bad(json!({"nodes": [node(0, &[1], 0, 24, 0.0, 0.0), node(1, &[0], 0, 24, 1.0, 0.0)]}))
             .contains("cycle"));
+        let off_globe = json!({"nodes": [{"id": 0, "hours": {"start": 0, "end": 24},
+                                          "coordinates": {"lat": 95.0, "lon": 0.0}}]});
+        assert!(bad(off_globe).contains("Latitude"));
         let many: Vec<Value> = (0..11).map(|i| node(i, &[], 0, 24, 0.0, 0.0)).collect();
         assert!(bad(json!({"nodes": many})).contains("limit"));
     }
@@ -745,6 +754,9 @@ mod tests {
             json!({"network_name": "ok", "content": {"nodes": [node(0, &[1], 0, 24, 0.0, 0.0), node(1, &[0], 0, 24, 1.0, 0.0)]}}),
             json!({"network_name": "ok", "content": {"nodes": [node(0, &[], 5, 5, 0.0, 0.0)]}}),
             json!({"network_name": "ok", "content": {"nodez": []}}),
+            json!({"network_name": "ok", "content": {"nodes": [{"id": 0, "hours": {"start": 0, "end": 24}, "coordinates": {"lat": 91.0, "lon": 0.0}}]}}),
+            json!({"network_name": "ok", "content": {"nodes": [{"id": 0, "hours": {"start": 0, "end": 24}, "coordinates": {"lat": 0.0, "lon": 181.0}}]}}),
+            json!({"network_name": "ok", "content": {"nodes": [{"id": 0, "hours": {"start": 0, "end": 24}, "coordinates": {"x": 0.0, "y": 0.0}}]}}),
             json!({"network_name": "ok", "content": "not json"}),
             json!({"network_name": "ok"}),
             json!({"network_name": "ok", "content": detour_network(), "extra": 1}),
@@ -765,6 +777,35 @@ mod tests {
         assert!(b["error"].as_str().unwrap().contains("invalid request body"));
     }
 
+    #[tokio::test]
+    async fn coordinates_are_stored_and_returned_as_lat_lon() {
+        let app = TestApp::new();
+        let content = json!({"nodes": [
+            {"id": 0, "hours": {"start": 0, "end": 24}, "coordinates": {"lat": 41.824, "lon": -71.4128}},
+            {"id": 1, "parents": [0], "hours": {"start": 0, "end": 24}, "coordinates": {"lat": 42.3601, "lon": -71.0589}},
+        ]});
+        upload(&app, "geo", content).await;
+        let stored: Value =
+            serde_json::from_str(&std::fs::read_to_string(app.file("geo")).unwrap()).unwrap();
+        assert_eq!(stored["nodes"][0]["coordinates"], json!({"lat": 41.824, "lon": -71.4128}));
+
+        let (s, b) = app
+            .post(
+                "/api/change",
+                json!({"network_name": "geo", "changes": [
+                    {"type": "update_hours", "node": 1, "hours": {"start": 8, "end": 20}}
+                ]}),
+            )
+            .await;
+        assert_eq!(s, StatusCode::OK, "{b}");
+        assert_eq!(b["network"]["nodes"][1]["coordinates"], json!({"lat": 42.3601, "lon": -71.0589}));
+
+        // Providence -> Boston is ~66 km, i.e. a bit over an hour at 60 kph.
+        let (_, b) = app.post("/api/analyze", json!({"network_name": "geo"})).await;
+        let perf = b["original_performance"].as_f64().unwrap();
+        assert!((1.05..1.2).contains(&perf), "{perf}");
+    }
+
     // ---- /api/analyze ----
 
     #[tokio::test]
@@ -774,11 +815,16 @@ mod tests {
         let (s, b) = app.post("/api/analyze", json!({"network_name": "demo"})).await;
         assert_eq!(s, StatusCode::OK, "{b}");
         assert_eq!(b["suggested_changes"], json!([{"type": "add_edge", "parent": 0, "child": 2}]));
-        let sqrt2 = 2f64.sqrt();
+        // Expected values from the great-circle legs: 0->1 and 0->2 are axis-aligned
+        // 60 km (1 h); 1->2 is the diagonal.
+        let at = |x: f64, y: f64| Coordinates { lat: deg(y), lon: deg(x) };
+        let t01 = at(0.0, 0.0).distance_to(&at(0.0, 60.0)) / 60.0;
+        let t12 = at(0.0, 60.0).distance_to(&at(60.0, 0.0)) / 60.0;
+        let t02 = at(0.0, 0.0).distance_to(&at(60.0, 0.0)) / 60.0;
         let orig = b["original_performance"].as_f64().unwrap();
         let opt = b["optimized_performance"].as_f64().unwrap();
-        assert!((orig - (2.0 * (1.0 + sqrt2)) / 3.0).abs() < 1e-9);
-        assert!((opt - (2.0 + sqrt2) / 3.0).abs() < 1e-9);
+        assert!((orig - 2.0 * (t01 + t12) / 3.0).abs() < 1e-9);
+        assert!((opt - (t01 + t12 + t02) / 3.0).abs() < 1e-9);
     }
 
     #[tokio::test]
