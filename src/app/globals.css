@@ -1,12 +1,12 @@
 /*
- * Tailwind v4 entry: config lives here, with no tailwind.config.js or PostCSS plugin.
- * - Keep every @import in this top block, above @theme and the rest of the file. Install an
- *   npm package before @importing its CSS. Never @import a remote URL (web fonts, CDN CSS): the
- *   build resolves @import from the filesystem. Load those with a <link> in the head() of
- *   src/routes/__root.tsx and name the family in a --font-* token in @theme inline below.
+ * Tailwind v4 entry: config lives here (no tailwind.config.js); PostCSS loads it via
+ * @tailwindcss/postcss in postcss.config.mjs.
+ * - Keep every @import in this top block, above @theme and the rest of the file.
+ * - Fonts are loaded with next/font in src/app/layout.tsx, which exposes them as CSS
+ *   variables (--font-inter-tight, --font-jetbrains-mono) referenced by the --font-* tokens below.
+ * - source("../") scans all of src/ for class names.
  */
-@import "tailwindcss" source(none);
-@source "../src";
+@import "tailwindcss" source("../");
 @import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
@@ -37,8 +37,8 @@
   --radius-2xl: calc(var(--radius) + 8px);
   --radius-3xl: calc(var(--radius) + 12px);
   --radius-4xl: calc(var(--radius) + 16px);
-  --font-display: "Inter Tight", "Helvetica Neue", sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-display: var(--font-inter-tight), "Helvetica Neue", sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
   --color-ink: var(--ink);
   --color-ink-foreground: var(--ink-foreground);
   --color-background: var(--background);
