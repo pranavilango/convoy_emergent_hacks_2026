@@ -42,3 +42,6 @@ Object.defineProperty(window, "matchMedia", {
     dispatchEvent: () => {},
   }),
 });
+
+// jsdom doesn't implement scrollIntoView (used to keep the active listbox option visible).
+Element.prototype.scrollIntoView = function scrollIntoView() {};

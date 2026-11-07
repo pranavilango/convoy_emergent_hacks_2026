@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Image from "next/image";
+import Link from "next/link";
 
 import earth from "@/assets/earth-network.jpg";
 
@@ -50,12 +51,12 @@ export default function Home() {
           <a href="#solution">Solution</a>
           <a href="#how">How it works</a>
         </nav>
-        <a
-          href="#how"
+        <Link
+          href="/demo"
           className="rounded-sm bg-foreground px-4 py-2 text-sm text-background transition-opacity hover:opacity-85"
         >
           Try the demo
-        </a>
+        </Link>
       </header>
 
       {/* Hero */}
