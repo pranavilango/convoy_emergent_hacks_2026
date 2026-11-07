@@ -1,26 +1,21 @@
-import { createFileRoute } from "@tanstack/react-router";
+import type { Metadata } from "next";
+import Image from "next/image";
+
 import earth from "@/assets/earth-network.jpg";
 
-export const Route = createFileRoute("/")({
-  head: () => ({
-    meta: [
-      { title: "Convoy — Growth planner for small businesses" },
-      {
-        name: "description",
-        content:
-          "A preconfigured linear-time logistics analysis platform for SMEs to optimize scaling.",
-      },
-      { property: "og:title", content: "Convoy — Growth planner for small businesses" },
-      {
-        property: "og:description",
-        content: "Upload your network. Convoy tells you the highest-impact changes to make next.",
-      },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
-    ],
-  }),
-  component: Index,
-});
+export const metadata: Metadata = {
+  title: { absolute: "Convoy — Growth planner for small businesses" },
+  description:
+    "A preconfigured linear-time logistics analysis platform for SMEs to optimize scaling.",
+  openGraph: {
+    title: "Convoy — Growth planner for small businesses",
+    description: "Upload your network. Convoy tells you the highest-impact changes to make next.",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+  },
+};
 
 const outputs = ["New store", "Delivery zone", "Working hours", "Fleet size", "Order routing"];
 
@@ -29,13 +24,19 @@ const inputs = [
   ["02", "Working hours", "When each site and driver is on."],
   ["03", "Order sizes", "What customers buy, and where."],
   ["04", "Vehicles", "Bikes, vans, capacity, cost."],
-];
+] as const;
+
+const problems = [
+  ["Technical", "Existing tools assume you have an operations research team."],
+  ["Expensive", "Enterprise pricing built for enterprise fleets."],
+  ["Not actionable", "Dashboards full of numbers — no clear next step."],
+] as const;
 
 function Arrow() {
   return <span className="font-mono text-xs">↘</span>;
 }
 
-function Index() {
+export default function Home() {
   return (
     <main className="bg-background font-display text-foreground">
       {/* Nav */}
@@ -81,8 +82,7 @@ function Index() {
         <div className="mt-6 grid grid-cols-1 items-end gap-8 md:grid-cols-[18rem_1fr]">
           <div className="text-sm">
             <p className="max-w-xs">
-              A preconfigured linear-time logistics analysis platform for SMEs to optimize
-              scaling.
+              A preconfigured linear-time logistics analysis platform for SMEs to optimize scaling.
             </p>
             <a
               href="#solution"
@@ -99,7 +99,14 @@ function Index() {
 
       {/* Image */}
       <section className="relative bg-ink text-ink-foreground">
-        <img src={earth} alt="City lights connected by glowing delivery routes" width={1920} height={1088} className="h-[70vh] w-full object-cover" />
+        <Image
+          src={earth}
+          alt="City lights connected by glowing delivery routes"
+          sizes="100vw"
+          preload
+          placeholder="blur"
+          className="h-[70vh] w-full object-cover"
+        />
         <div className="absolute inset-x-0 bottom-0 flex justify-between px-6 py-6 font-mono text-[11px] uppercase tracking-wider md:px-10">
           <span>_02 Your network, mapped</span>
           <span>Linear-time analysis</span>
@@ -108,17 +115,15 @@ function Index() {
 
       {/* Problem */}
       <section id="problem" className="bg-ink px-6 py-28 text-ink-foreground md:px-10">
-        <div className="font-mono text-[11px] uppercase tracking-wider opacity-70">_03 The problem</div>
+        <div className="font-mono text-[11px] uppercase tracking-wider opacity-70">
+          _03 The problem
+        </div>
         <p className="mt-10 max-w-6xl text-4xl leading-[1.05] tracking-[-0.04em] md:text-7xl">
-          You're a local bakery. You want to deliver cupcakes to more people.{" "}
+          You&apos;re a local bakery. You want to deliver cupcakes to more people.{" "}
           <span className="text-background">Every resource counts.</span>
         </p>
         <div className="mt-20 grid gap-10 border-t border-ink-foreground/20 pt-10 md:grid-cols-3">
-          {[
-            ["Technical", "Existing tools assume you have an operations research team."],
-            ["Expensive", "Enterprise pricing built for enterprise fleets."],
-            ["Not actionable", "Dashboards full of numbers — no clear next step."],
-          ].map(([t, d]) => (
+          {problems.map(([t, d]) => (
             <div key={t}>
               <h3 className="text-2xl tracking-tight">{t}</h3>
               <p className="mt-2 text-sm opacity-70">{d}</p>
@@ -147,7 +152,10 @@ function Index() {
         </div>
         <div className="mt-12 divide-y divide-foreground/30 border-y border-foreground/30">
           {inputs.map(([n, t, d]) => (
-            <div key={n} className="grid grid-cols-[3rem_1fr] items-baseline gap-4 py-6 md:grid-cols-[6rem_1fr_1fr]">
+            <div
+              key={n}
+              className="grid grid-cols-[3rem_1fr] items-baseline gap-4 py-6 md:grid-cols-[6rem_1fr_1fr]"
+            >
               <span className="font-mono text-xs">{n}</span>
               <span className="text-4xl tracking-[-0.04em] md:text-6xl">{t}</span>
               <span className="col-start-2 text-sm md:col-start-auto md:text-right">{d}</span>
