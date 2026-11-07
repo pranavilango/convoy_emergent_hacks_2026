@@ -1,5 +1,5 @@
 import { isTypeColor } from "./colors";
-import type { DemoState, Location, LocationType, NewLocation } from "./types";
+import type { Connection, DemoState, Location, LocationType, NewLocation } from "./types";
 
 export const DEFAULT_TYPES: LocationType[] = [
   { id: "factory", name: "Factory", color: "#f2b33d" },
@@ -7,7 +7,7 @@ export const DEFAULT_TYPES: LocationType[] = [
   { id: "retail-store", name: "Retail store", color: "#4fd1a5" },
 ];
 
-export const INITIAL_STATE: DemoState = { types: DEFAULT_TYPES, locations: [] };
+export const INITIAL_STATE: DemoState = { types: DEFAULT_TYPES, locations: [], connections: [] };
 
 export const MAX_TYPE_NAME_LENGTH = 32;
 export const MAX_LOCATION_NAME_LENGTH = 80;
@@ -20,6 +20,8 @@ export type DemoAction =
   | { type: "addLocation"; id: string; createdAt: string; location: NewLocation }
   | { type: "updateLocation"; id: string; name?: string; typeId?: string }
   | { type: "removeLocation"; id: string }
+  | { type: "addConnection"; id: string; fromId: string; toId: string }
+  | { type: "removeConnection"; id: string }
   | { type: "replace"; state: DemoState };
 
 export function normalizeName(name: string, max: number): string {
@@ -86,7 +88,11 @@ export function reducer(state: DemoState, action: DemoAction): DemoState {
         reassignTo === undefined
           ? state.locations.filter((l) => l.typeId !== action.id)
           : state.locations.map((l) => (l.typeId === action.id ? { ...l, typeId: reassignTo } : l));
-      return { types, locations };
+      const locationIds = new Set(locations.map((location) => location.id));
+      const connections = state.connections.filter(
+        (connection) => locationIds.has(connection.fromId) && locationIds.has(connection.toId),
+      );
+      return { ...state, types, locations, connections };
     }
 
     case "addLocation": {
@@ -120,7 +126,37 @@ export function reducer(state: DemoState, action: DemoAction): DemoState {
 
     case "removeLocation": {
       if (!state.locations.some((l) => l.id === action.id)) return state;
-      return { ...state, locations: state.locations.filter((l) => l.id !== action.id) };
+      return {
+        ...state,
+        locations: state.locations.filter((l) => l.id !== action.id),
+        connections: state.connections.filter(
+          (connection) => connection.fromId !== action.id && connection.toId !== action.id,
+        ),
+      };
+    }
+
+    case "addConnection": {
+      if (action.fromId === action.toId || state.connections.some((c) => c.id === action.id)) {
+        return state;
+      }
+      if (
+        !state.locations.some((l) => l.id === action.fromId) ||
+        !state.locations.some((l) => l.id === action.toId) ||
+        state.connections.some((c) => c.fromId === action.fromId && c.toId === action.toId)
+      ) {
+        return state;
+      }
+      const connection: Connection = {
+        id: action.id,
+        fromId: action.fromId,
+        toId: action.toId,
+      };
+      return { ...state, connections: [...state.connections, connection] };
+    }
+
+    case "removeConnection": {
+      if (!state.connections.some((c) => c.id === action.id)) return state;
+      return { ...state, connections: state.connections.filter((c) => c.id !== action.id) };
     }
 
     case "replace":
@@ -163,6 +199,23 @@ function parseLocation(value: unknown, typeIds: Set<string>): Location | null {
   };
 }
 
+function parseConnection(value: unknown, locationIds: Set<string>): Connection | null {
+  if (!isRecord(value)) return null;
+  const { id, fromId, toId } = value;
+  if (
+    typeof id !== "string" ||
+    !id ||
+    typeof fromId !== "string" ||
+    typeof toId !== "string" ||
+    fromId === toId ||
+    !locationIds.has(fromId) ||
+    !locationIds.has(toId)
+  ) {
+    return null;
+  }
+  return { id, fromId, toId };
+}
+
 /**
  * Validates state read from storage. Drops anything malformed rather than failing outright, so
  * one bad record (or a hand-edited value) doesn't wipe the user's other locations.
@@ -190,5 +243,20 @@ export function parseState(value: unknown): DemoState | null {
     seenLocationIds.add(l.id);
     locations.push(l);
   }
-  return { types, locations };
+  const rawConnections = value["connections"];
+  const connections: Connection[] = [];
+  const seenConnectionIds = new Set<string>();
+  const seenPairs = new Set<string>();
+  if (Array.isArray(rawConnections)) {
+    for (const raw of rawConnections) {
+      const connection = parseConnection(raw, seenLocationIds);
+      if (!connection || seenConnectionIds.has(connection.id)) continue;
+      const pair = JSON.stringify([connection.fromId, connection.toId]);
+      if (seenPairs.has(pair)) continue;
+      seenConnectionIds.add(connection.id);
+      seenPairs.add(pair);
+      connections.push(connection);
+    }
+  }
+  return { types, locations, connections };
 }

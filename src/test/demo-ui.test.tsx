@@ -125,6 +125,27 @@ describe("location list", () => {
   });
 });
 
+describe("location connections", () => {
+  it("creates and removes directed connections", () => {
+    act(() => {
+      addLocation("factory", "Plant A");
+      addLocation("warehouse", "Depot B");
+    });
+    render(<DemoApp />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add connection" }));
+    const removeButton = screen.getByRole("button", {
+      name: "Remove connection from Plant A to Depot B",
+    });
+    expect(removeButton).toBeInTheDocument();
+
+    fireEvent.click(removeButton);
+    expect(
+      screen.queryByRole("button", { name: "Remove connection from Plant A to Depot B" }),
+    ).toBeNull();
+  });
+});
+
 describe("Select", () => {
   function Harness() {
     const [value, setValue] = useState("a");
