@@ -21,6 +21,7 @@ export function Select({
   disabled,
   placeholder = "Choose…",
   hideLabel = false,
+  compact = false,
   className,
 }: {
   label: string;
@@ -30,6 +31,8 @@ export function Select({
   disabled?: boolean;
   placeholder?: string;
   hideLabel?: boolean;
+  /** Smaller trigger for dense layouts (e.g. the working-hours grid). */
+  compact?: boolean;
   className?: string;
 }) {
   const baseId = useId();
@@ -157,7 +160,8 @@ export function Select({
         onClick={() => (open ? close(false) : openList())}
         onKeyDown={onButtonKeyDown}
         className={cn(
-          "flex w-full items-center justify-between gap-3 border-b border-foreground py-2 text-left text-base disabled:opacity-50",
+          "flex w-full items-center justify-between gap-3 border-b border-foreground text-left disabled:opacity-50",
+          compact ? "gap-1.5 py-1 font-mono text-xs" : "py-2 text-base",
           focusRing,
         )}
       >

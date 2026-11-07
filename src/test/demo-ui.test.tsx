@@ -4,7 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DemoApp } from "@/components/demo/demo-app";
 import { Select } from "@/components/demo/select";
-import { __resetDemoStore, demoActions, STORAGE_KEY } from "@/lib/demo/store";
+import { HoursEditor } from "@/components/demo/hours-editor";
+import { cloneHours, DEFAULT_HOURS, type WeeklyHours } from "@/lib/demo/hours";
+import { __resetDemoStore, demoActions, STORAGE_KEY, useDemoState } from "@/lib/demo/store";
 
 // The Maps SDK can't run in jsdom. These tests cover the no-key path and pure UI; the map itself
 // is exercised manually against the real API.
@@ -21,8 +23,21 @@ beforeEach(() => {
   act(() => __resetDemoStore());
 });
 
+/** Expand a location's row in the Locations section. */
+function openLocation(name: string) {
+  const list = screen.getByRole("region", { name: /Locations/ });
+  fireEvent.click(within(list).getByRole("button", { name: new RegExp(`^${name}`) }));
+}
+
 function addLocation(typeId: string, name: string) {
-  return demoActions.addLocation({ name, address: `${name} address`, lat: 1, lng: 2, typeId });
+  return demoActions.addLocation({
+    name,
+    address: `${name} address`,
+    lat: 1,
+    lng: 2,
+    typeId,
+    hours: cloneHours(DEFAULT_HOURS),
+  });
 }
 
 describe("demo store persistence", () => {
@@ -126,23 +141,147 @@ describe("location list", () => {
 });
 
 describe("location connections", () => {
-  it("creates and removes directed connections", () => {
+  function pick(label: string, option: string) {
+    fireEvent.click(screen.getByRole("combobox", { name: label }));
+    fireEvent.click(screen.getByRole("option", { name: new RegExp(option) }));
+  }
+
+  it("connects one location to another from the panel, and removes it", () => {
     act(() => {
       addLocation("factory", "Plant A");
       addLocation("warehouse", "Depot B");
     });
     render(<DemoApp />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Add connection" }));
-    const removeButton = screen.getByRole("button", {
+    const add = screen.getByRole("button", { name: /Add connection/ });
+    expect(add).toBeDisabled();
+    pick("From", "Plant A");
+    pick("To", "Depot B");
+    fireEvent.click(add);
+
+    const remove = screen.getByRole("button", {
       name: "Remove connection from Plant A to Depot B",
     });
-    expect(removeButton).toBeInTheDocument();
+    // Plant A → Depot B exists, so it isn't offered again…
+    pick("From", "Plant A");
+    expect(screen.getByRole("combobox", { name: "To" })).toBeDisabled();
+    // …but the reverse direction still is.
+    pick("From", "Depot B");
+    pick("To", "Plant A");
+    fireEvent.click(add);
+    expect(
+      screen.getByRole("button", { name: "Remove connection from Depot B to Plant A" }),
+    ).toBeInTheDocument();
 
-    fireEvent.click(removeButton);
+    fireEvent.click(remove);
     expect(
       screen.queryByRole("button", { name: "Remove connection from Plant A to Depot B" }),
     ).toBeNull();
+  });
+
+  it("shows outgoing and incoming connections in a location's expanded row", () => {
+    act(() => {
+      const a = addLocation("factory", "Plant A");
+      const b = addLocation("warehouse", "Depot B");
+      const c = addLocation("retail-store", "Shop C");
+      demoActions.connectLocations(a, b);
+      demoActions.connectLocations(c, a);
+    });
+    render(<DemoApp />);
+    openLocation("Plant A");
+
+    expect(
+      screen.getByRole("button", { name: "Remove connection to Depot B" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Remove connection from Shop C" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Remove location \+ 2 connections/ }),
+    ).toBeInTheDocument();
+
+    // Shop C → Plant A exists, but Plant A → Shop C doesn't, so it's offered.
+    pick("Connect Plant A to", "Shop C");
+    expect(screen.getByRole("button", { name: "Remove connection to Shop C" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove connection to Depot B" }));
+    expect(screen.queryByRole("button", { name: "Remove connection to Depot B" })).toBeNull();
+  });
+
+  it("removing a location removes its connections", () => {
+    act(() => {
+      const a = addLocation("factory", "Plant A");
+      const b = addLocation("warehouse", "Depot B");
+      demoActions.connectLocations(a, b);
+    });
+    render(<DemoApp />);
+    openLocation("Plant A");
+    fireEvent.click(screen.getByRole("button", { name: /Remove location/ }));
+    expect(screen.queryByRole("button", { name: /Remove connection from/ })).toBeNull();
+  });
+});
+
+describe("working hours", () => {
+  function Harness({ onChange }: { onChange?: (h: WeeklyHours) => void }) {
+    const [hours, setHours] = useState(() => cloneHours(DEFAULT_HOURS));
+    return (
+      <HoursEditor
+        value={hours}
+        onChange={(h) => {
+          setHours(h);
+          onChange?.(h);
+        }}
+      />
+    );
+  }
+
+  it("opens a closed day with the previous day's hours and edits times", () => {
+    const changes: WeeklyHours[] = [];
+    render(<Harness onChange={(h) => changes.push(h)} />);
+
+    const sat = screen.getByRole("switch", { name: "Open on Sat" });
+    expect(sat).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(sat);
+    expect(changes.at(-1)?.sat).toEqual([{ open: 540, close: 1020 }]);
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Sat closes" }));
+    fireEvent.click(screen.getByRole("option", { name: "13:00" }));
+    expect(changes.at(-1)?.sat).toEqual([{ open: 540, close: 780 }]);
+  });
+
+  it("marks closing times before opening as next-day, and applies presets", () => {
+    const changes: WeeklyHours[] = [];
+    render(<Harness onChange={(h) => changes.push(h)} />);
+    fireEvent.click(screen.getByRole("combobox", { name: "Mon closes" }));
+    fireEvent.click(screen.getByRole("option", { name: "02:00 +1" }));
+    expect(changes.at(-1)?.mon).toEqual([{ open: 540, close: 120 }]);
+
+    fireEvent.click(screen.getByRole("button", { name: "24/7" }));
+    expect(changes.at(-1)?.sun).toEqual([{ open: 0, close: 1440 }]);
+  });
+
+  it("edits a saved location's hours", () => {
+    act(() => {
+      addLocation("factory", "Plant A");
+    });
+    function Hours() {
+      return <output>{JSON.stringify(useDemoState().locations[0]?.hours?.sat)}</output>;
+    }
+    render(
+      <>
+        <DemoApp />
+        <Hours />
+      </>,
+    );
+    openLocation("Plant A");
+    expect(screen.getByText("Mon–Fri 09:00–17:00")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Open on Sat" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save hours" }));
+
+    expect(screen.getByText("Mon–Sat 09:00–17:00")).toBeInTheDocument();
+    expect(screen.getByText('[{"open":540,"close":1020}]')).toBeInTheDocument();
   });
 });
 

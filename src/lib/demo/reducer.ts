@@ -1,4 +1,6 @@
 import { isTypeColor } from "./colors";
+import { findConnection, involves } from "./graph";
+import { cloneHours, hoursError, parseHours, type WeeklyHours } from "./hours";
 import type { Connection, DemoState, Location, LocationType, NewLocation } from "./types";
 
 export const DEFAULT_TYPES: LocationType[] = [
@@ -18,8 +20,9 @@ export type DemoAction =
   /** Locations of the removed type are moved to `reassignTo`, or deleted when it is omitted. */
   | { type: "removeType"; id: string; reassignTo?: string }
   | { type: "addLocation"; id: string; createdAt: string; location: NewLocation }
-  | { type: "updateLocation"; id: string; name?: string; typeId?: string }
+  | { type: "updateLocation"; id: string; name?: string; typeId?: string; hours?: WeeklyHours }
   | { type: "removeLocation"; id: string }
+  /** Directed. A duplicate of an existing fromId → toId is ignored; the reverse is allowed. */
   | { type: "addConnection"; id: string; fromId: string; toId: string }
   | { type: "removeConnection"; id: string }
   | { type: "replace"; state: DemoState };
@@ -89,9 +92,10 @@ export function reducer(state: DemoState, action: DemoAction): DemoState {
           ? state.locations.filter((l) => l.typeId !== action.id)
           : state.locations.map((l) => (l.typeId === action.id ? { ...l, typeId: reassignTo } : l));
       const locationIds = new Set(locations.map((location) => location.id));
-      const connections = state.connections.filter(
-        (connection) => locationIds.has(connection.fromId) && locationIds.has(connection.toId),
-      );
+      const connections =
+        locations.length === state.locations.length
+          ? state.connections
+          : state.connections.filter((c) => locationIds.has(c.fromId) && locationIds.has(c.toId));
       return { ...state, types, locations, connections };
     }
 
@@ -104,7 +108,14 @@ export function reducer(state: DemoState, action: DemoAction): DemoState {
         normalizeName(location.name, MAX_LOCATION_NAME_LENGTH) ||
         normalizeName(location.address, MAX_LOCATION_NAME_LENGTH);
       if (!name) return state;
-      const added: Location = { ...location, name, id: action.id, createdAt: action.createdAt };
+      if (hoursError(location.hours)) return state;
+      const added: Location = {
+        ...location,
+        name,
+        hours: cloneHours(location.hours),
+        id: action.id,
+        createdAt: action.createdAt,
+      };
       return { ...state, locations: [...state.locations, added] };
     }
 
@@ -121,6 +132,10 @@ export function reducer(state: DemoState, action: DemoAction): DemoState {
         if (!state.types.some((t) => t.id === action.typeId)) return state;
         next.typeId = action.typeId;
       }
+      if (action.hours !== undefined) {
+        if (hoursError(action.hours)) return state;
+        next.hours = cloneHours(action.hours);
+      }
       return { ...state, locations: state.locations.map((l) => (l.id === action.id ? next : l)) };
     }
 
@@ -129,28 +144,21 @@ export function reducer(state: DemoState, action: DemoAction): DemoState {
       return {
         ...state,
         locations: state.locations.filter((l) => l.id !== action.id),
-        connections: state.connections.filter(
-          (connection) => connection.fromId !== action.id && connection.toId !== action.id,
-        ),
+        connections: state.connections.filter((c) => !involves(c, action.id)),
       };
     }
 
     case "addConnection": {
-      if (action.fromId === action.toId || state.connections.some((c) => c.id === action.id)) {
-        return state;
-      }
+      const { fromId, toId } = action;
+      if (fromId === toId || state.connections.some((c) => c.id === action.id)) return state;
       if (
-        !state.locations.some((l) => l.id === action.fromId) ||
-        !state.locations.some((l) => l.id === action.toId) ||
-        state.connections.some((c) => c.fromId === action.fromId && c.toId === action.toId)
+        !state.locations.some((l) => l.id === fromId) ||
+        !state.locations.some((l) => l.id === toId)
       ) {
         return state;
       }
-      const connection: Connection = {
-        id: action.id,
-        fromId: action.fromId,
-        toId: action.toId,
-      };
+      if (findConnection(state.connections, fromId, toId)) return state;
+      const connection: Connection = { id: action.id, fromId, toId };
       return { ...state, connections: [...state.connections, connection] };
     }
 
@@ -180,7 +188,7 @@ function parseType(value: unknown): LocationType | null {
 
 function parseLocation(value: unknown, typeIds: Set<string>): Location | null {
   if (!isRecord(value)) return null;
-  const { id, name, address, placeId, lat, lng, typeId, createdAt } = value;
+  const { id, name, address, placeId, lat, lng, typeId, createdAt, hours } = value;
   if (typeof id !== "string" || !id) return null;
   if (typeof name !== "string" || !name.trim() || typeof address !== "string") return null;
   if (typeof lat !== "number" || !Number.isFinite(lat) || Math.abs(lat) > 90) return null;
@@ -195,24 +203,22 @@ function parseLocation(value: unknown, typeIds: Set<string>): Location | null {
     lat,
     lng,
     typeId,
+    // Locations saved before working hours existed (or with malformed hours) load as "not set".
+    hours: parseHours(hours),
     createdAt,
   };
 }
 
 function parseConnection(value: unknown, locationIds: Set<string>): Connection | null {
   if (!isRecord(value)) return null;
-  const { id, fromId, toId } = value;
-  if (
-    typeof id !== "string" ||
-    !id ||
-    typeof fromId !== "string" ||
-    typeof toId !== "string" ||
-    fromId === toId ||
-    !locationIds.has(fromId) ||
-    !locationIds.has(toId)
-  ) {
+  const { id } = value;
+  // A short-lived build stored undirected { aId, bId }; read those as aId → bId.
+  const fromId = value["fromId"] ?? value["aId"];
+  const toId = value["toId"] ?? value["bId"];
+  if (typeof id !== "string" || !id || typeof fromId !== "string" || typeof toId !== "string") {
     return null;
   }
+  if (fromId === toId || !locationIds.has(fromId) || !locationIds.has(toId)) return null;
   return { id, fromId, toId };
 }
 

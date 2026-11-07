@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 
+import type { WeeklyHours } from "./hours";
 import { INITIAL_STATE, parseState, reducer, type DemoAction } from "./reducer";
 import type { DemoState, NewLocation } from "./types";
 
@@ -118,9 +119,13 @@ export const demoActions = {
   setLocationType(id: string, typeId: string) {
     dispatch({ type: "updateLocation", id, typeId });
   },
+  setLocationHours(id: string, hours: WeeklyHours) {
+    dispatch({ type: "updateLocation", id, hours });
+  },
   removeLocation(id: string) {
     dispatch({ type: "removeLocation", id });
   },
+  /** Add a directed connection fromId → toId. No-op if it already exists. */
   connectLocations(fromId: string, toId: string): string {
     const id = newId();
     dispatch({ type: "addConnection", id, fromId, toId });

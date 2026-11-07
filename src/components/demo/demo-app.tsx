@@ -4,7 +4,8 @@ import { APIProvider } from "@vis.gl/react-google-maps";
 import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { useDemoState } from "@/lib/demo/store";
+import { findConnection, outgoing } from "@/lib/demo/graph";
+import { demoActions, useDemoState } from "@/lib/demo/store";
 import type { Location, LocationType } from "@/lib/demo/types";
 
 import { AddLocationForm } from "./add-location-form";
@@ -12,7 +13,8 @@ import { focusRing } from "./controls";
 import { ConnectionsManager } from "./connections-manager";
 import { LocationList } from "./location-list";
 import { LocationTypeManager } from "./location-type-manager";
-import { MapView, type FocusRequest } from "./map-view";
+import { connectionCountLabel, MapView, type FocusRequest } from "./map-view";
+import type { Selection } from "./selection";
 
 /** Google's shared Map ID for testing. Advanced markers need *some* Map ID to render. */
 const FALLBACK_MAP_ID = "DEMO_MAP_ID";
@@ -28,7 +30,8 @@ declare global {
 
 export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) {
   const { types, locations, connections } = useDemoState();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [rawSelection, setSelection] = useState<Selection>(null);
+  const [rawConnectingFrom, setConnectingFrom] = useState<string | null>(null);
   const [focus, setFocus] = useState<FocusRequest | null>(null);
   const [problem, setProblem] = useState<MapProblem | null>(apiKey ? null : "unconfigured");
 
@@ -45,12 +48,61 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
     };
   }, [apiKey, mapId]);
 
-  // Drop a selection that points at a location that no longer exists (e.g. its type was deleted).
-  const selected = selectedId && locations.some((l) => l.id === selectedId) ? selectedId : null;
+  // Ignore selections that point at something that no longer exists (e.g. deleted with its type).
+  const selection: Selection =
+    rawSelection?.kind === "location" && locations.some((l) => l.id === rawSelection.id)
+      ? rawSelection
+      : rawSelection?.kind === "connection" && connections.some((c) => c.id === rawSelection.id)
+        ? rawSelection
+        : null;
+  const connectingFrom =
+    rawConnectingFrom && !problem && locations.some((l) => l.id === rawConnectingFrom)
+      ? rawConnectingFrom
+      : null;
+  const connectingLocation = connectingFrom
+    ? locations.find((l) => l.id === connectingFrom)
+    : undefined;
 
-  function selectFromList(id: string | null) {
-    setSelectedId(id);
-    if (id) setFocus({ id, nonce: Date.now() });
+  // Escape leaves connect mode first, then clears the selection.
+  useEffect(() => {
+    if (!connectingFrom && !selection) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (connectingFrom) setConnectingFrom(null);
+      else setSelection(null);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [connectingFrom, selection]);
+
+  function selectLocationFromPanel(id: string | null) {
+    setConnectingFrom(null);
+    setSelection(id ? { kind: "location", id } : null);
+    if (id) setFocus({ ids: [id], nonce: Date.now() });
+  }
+
+  function selectConnectionFromPanel(id: string | null) {
+    setConnectingFrom(null);
+    setSelection(id ? { kind: "connection", id } : null);
+    const c = id ? connections.find((x) => x.id === id) : undefined;
+    if (c) setFocus({ ids: [c.fromId, c.toId], nonce: Date.now() });
+  }
+
+  function startConnecting(id: string) {
+    setSelection({ kind: "location", id });
+    setConnectingFrom(id);
+  }
+
+  function stopConnecting() {
+    setConnectingFrom(null);
+  }
+
+  /** In connect mode, clicking a square toggles the connection origin → that square. */
+  function toggleConnection(targetId: string) {
+    if (!connectingFrom || targetId === connectingFrom) return;
+    const existing = findConnection(connections, connectingFrom, targetId);
+    if (existing) demoActions.removeConnection(existing.id);
+    else demoActions.connectLocations(connectingFrom, targetId);
   }
 
   const panel = (
@@ -58,16 +110,27 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
       <AddLocationForm
         types={types}
         searchAvailable={problem === null}
-        onAdded={(id) => setSelectedId(id)}
+        onAdded={(id) => {
+          setConnectingFrom(null);
+          setSelection({ kind: "location", id });
+        }}
       />
       <LocationTypeManager types={types} locations={locations} />
       <LocationList
         locations={locations}
         types={types}
-        selectedId={selected}
-        onSelect={selectFromList}
+        connections={connections}
+        selectedId={selection?.kind === "location" ? selection.id : null}
+        onSelect={selectLocationFromPanel}
+        {...(problem ? {} : { onStartConnecting: startConnecting })}
       />
-      <ConnectionsManager locations={locations} connections={connections} />
+      <ConnectionsManager
+        locations={locations}
+        types={types}
+        connections={connections}
+        selectedConnectionId={selection?.kind === "connection" ? selection.id : null}
+        onSelectConnection={selectConnectionFromPanel}
+      />
     </div>
   );
 
@@ -81,18 +144,35 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
           locations={locations}
           connections={connections}
           types={types}
-          selectedId={selected}
+          selection={selection}
+          connectingFrom={connectingFrom}
           focus={focus}
-          onSelect={setSelectedId}
+          onSelect={setSelection}
+          onConnectTo={toggleConnection}
+          onStartConnecting={startConnecting}
+          onRemoveConnection={(id) => {
+            demoActions.removeConnection(id);
+            setSelection(null);
+          }}
+          onBackgroundClick={() => (connectingFrom ? stopConnecting() : setSelection(null))}
         />
       )}
-      {!problem && <Legend types={types} locations={locations} />}
+      {!problem && (
+        <Legend types={types} locations={locations} connectionCount={connections.length} />
+      )}
+      {connectingLocation && (
+        <ConnectBanner
+          origin={connectingLocation}
+          count={outgoing(connections, connectingLocation.id).length}
+          onDone={stopConnecting}
+        />
+      )}
     </div>
   );
 
   const layout = (
     <div className="flex min-h-dvh flex-col bg-background font-display text-foreground md:h-dvh">
-      <DemoHeader count={locations.length} />
+      <DemoHeader count={locations.length} connectionCount={connections.length} />
       <div className="flex flex-1 flex-col md:grid md:min-h-0 md:grid-cols-[minmax(22rem,26rem)_1fr]">
         <section aria-label="Map" className="order-1 h-[55vh] md:order-2 md:h-auto">
           {mapArea}
@@ -115,7 +195,40 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
   );
 }
 
-function DemoHeader({ count }: { count: number }) {
+function ConnectBanner({
+  origin,
+  count,
+  onDone,
+}: {
+  origin: Location;
+  count: number;
+  onDone: () => void;
+}) {
+  return (
+    <div
+      role="status"
+      className="absolute inset-x-4 top-4 z-10 flex items-center justify-between gap-4 rounded-sm bg-foreground px-4 py-3 text-background shadow-lg md:left-1/2 md:right-auto md:w-[26rem] md:-translate-x-1/2"
+    >
+      <div className="min-w-0">
+        <div className="font-mono text-[11px] uppercase tracking-wider opacity-70">
+          _Connecting · {connectionCountLabel(count)}
+        </div>
+        <p className="mt-0.5 truncate text-sm">
+          Click squares to link <strong>{origin.name}</strong> → them. Click again to unlink.
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onDone}
+        className="shrink-0 rounded-sm bg-background px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider text-foreground outline-none hover:opacity-85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-background"
+      >
+        Done · Esc
+      </button>
+    </div>
+  );
+}
+
+function DemoHeader({ count, connectionCount }: { count: number; connectionCount: number }) {
   return (
     <header className="flex items-center justify-between border-b border-foreground/30 px-6 py-4 md:px-10">
       <div className="flex items-center gap-6">
@@ -132,7 +245,8 @@ function DemoHeader({ count }: { count: number }) {
       </div>
       <div className="flex items-center gap-6">
         <span className="hidden font-mono text-[11px] uppercase tracking-wider md:inline">
-          {String(count).padStart(2, "0")} {count === 1 ? "location" : "locations"} mapped
+          {String(count).padStart(2, "0")} {count === 1 ? "location" : "locations"} ·{" "}
+          {connectionCountLabel(connectionCount)}
         </span>
         <Link
           href="/"
@@ -145,12 +259,21 @@ function DemoHeader({ count }: { count: number }) {
   );
 }
 
-function Legend({ types, locations }: { types: LocationType[]; locations: Location[] }) {
+function Legend({
+  types,
+  locations,
+  connectionCount,
+}: {
+  types: LocationType[];
+  locations: Location[];
+  connectionCount: number;
+}) {
   if (types.length === 0) return null;
   const counts = new Map<string, number>();
   for (const l of locations) counts.set(l.typeId, (counts.get(l.typeId) ?? 0) + 1);
   return (
-    <div className="pointer-events-none absolute left-4 top-4 rounded-sm bg-ink/90 px-3 py-2.5 font-mono text-[11px] uppercase tracking-wider text-ink-foreground shadow-lg backdrop-blur-sm">
+    // Bottom-left, above Google's logo, so it never collides with the connect banner up top.
+    <div className="pointer-events-none absolute bottom-9 left-3 rounded-sm bg-ink/90 px-3 py-2.5 font-mono text-[11px] uppercase tracking-wider text-ink-foreground shadow-lg backdrop-blur-sm">
       <ul className="space-y-1.5">
         {types.map((t) => (
           <li key={t.id} className="flex items-center gap-2">
@@ -165,6 +288,16 @@ function Legend({ types, locations }: { types: LocationType[]; locations: Locati
             </span>
           </li>
         ))}
+        <li className="flex items-center gap-2 border-t border-ink-foreground/15 pt-1.5">
+          {/* The legend sits on ink, so the sample uses cream; on the map lines are ink. */}
+          <span aria-hidden className="inline-block w-2.5 text-center leading-none">
+            →
+          </span>
+          <span>Connection</span>
+          <span className="ml-auto pl-3 opacity-60">
+            {String(connectionCount).padStart(2, "0")}
+          </span>
+        </li>
       </ul>
     </div>
   );

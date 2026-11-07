@@ -158,4 +158,10 @@
     background-color: var(--color-background);
     color: var(--color-foreground);
   }
+
+  /* Map location squares: no focus outline after a mouse click (the larger square and its card
+     already show the selection), but keep it for keyboard users. */
+  gmp-advanced-marker:focus:not(:focus-visible) {
+    outline: none;
+  }
 }

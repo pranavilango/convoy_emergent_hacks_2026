@@ -40,13 +40,24 @@ npm run dev        # http://localhost:3000
 ## Demo (`/demo`)
 
 "Try the demo" opens a map editor. Search an address, give it a type (Factory, Warehouse, Retail
-store, or your own), and it's pinned on the map. Connect locations with one-way links to visualize
-the network. Everything is saved in the browser (`localStorage`, key `convoy.demo.v1`). Each
-visitor sees only their own data, and clearing site data resets it.
+store, or your own) and its working hours, and it's pinned on the map as a colored square.
+Connect locations to describe the network: select a square, press **Connect**, then click
+destination squares (click again to unlink). You can also connect from the panel. Everything is
+saved in the browser (`localStorage`, key `convoy.demo.v1`). Each visitor sees only their own
+data, and clearing site data resets it.
+
+The network is a directed graph, ready to hand to the planning engine later:
+
+- **Locations** are the nodes. Each has `hours`: one list of `{ open, close }` ranges per day
+  (`mon`–`sun`), in minutes since midnight. An empty list means closed. `close < open` runs past
+  midnight, and `close: 1440` means "until midnight". Locations saved before hours existed have
+  `hours: null`.
+- **Connections** are the edges, stored as `{ id, fromId, toId }`. A connection only records that
+  `fromId` links to `toId`: there's no distance or cost. A→B and B→A are separate connections.
 
 - Page: `src/app/demo/page.tsx`. UI: `src/components/demo/`.
-- State: `src/lib/demo/`. `reducer.ts` holds the rules and `store.ts` handles saving. Swap
-  `store.ts` to move to a backend.
+- State: `src/lib/demo/`. `reducer.ts` holds the rules, `graph.ts` the connection helpers,
+  `hours.ts` working hours, and `store.ts` handles saving. Swap `store.ts` to move to a backend.
 
 ### Google Maps setup
 

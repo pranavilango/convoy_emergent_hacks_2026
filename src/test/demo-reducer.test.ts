@@ -1,5 +1,22 @@
 import { describe, expect, it } from "vitest";
 
+import { pointBeforeEnd, screenDistance, visualMidpoint } from "@/lib/demo/geometry";
+import {
+  connectionsOf,
+  degrees,
+  findConnection,
+  incoming,
+  otherEnd,
+  outgoing,
+} from "@/lib/demo/graph";
+import {
+  cloneHours,
+  DEFAULT_HOURS,
+  HOURS_PRESETS,
+  hoursError,
+  parseHours,
+  summarizeHours,
+} from "@/lib/demo/hours";
 import { INITIAL_STATE, parseState, reducer, typeNameError } from "@/lib/demo/reducer";
 import type { DemoState, NewLocation } from "@/lib/demo/types";
 
@@ -10,6 +27,7 @@ const place = (typeId: string, overrides: Partial<NewLocation> = {}): NewLocatio
   lat: 51.5,
   lng: -0.12,
   typeId,
+  hours: cloneHours(DEFAULT_HOURS),
   ...overrides,
 });
 
@@ -117,35 +135,172 @@ describe("demo reducer", () => {
     expect(s.locations.map((l) => l.id)).toEqual(["b", "c"]);
   });
 
-  it("adds directed connections and rejects duplicates and invalid endpoints", () => {
-    const s = withLocations();
-    const connected = reducer(s, { type: "addConnection", id: "ab", fromId: "a", toId: "b" });
-    expect(connected.connections).toEqual([{ id: "ab", fromId: "a", toId: "b" }]);
-    expect(
-      reducer(connected, { type: "addConnection", id: "duplicate", fromId: "a", toId: "b" }),
-    ).toBe(connected);
-    expect(reducer(s, { type: "addConnection", id: "self", fromId: "a", toId: "a" })).toBe(s);
-    expect(reducer(s, { type: "addConnection", id: "missing", fromId: "a", toId: "missing" })).toBe(
-      s,
-    );
-    expect(
-      reducer(connected, { type: "addConnection", id: "ba", fromId: "b", toId: "a" }).connections,
-    ).toHaveLength(2);
+  const connect = (s: DemoState, id: string, fromId: string, toId: string) =>
+    reducer(s, { type: "addConnection", id, fromId, toId });
+
+  it("adds directed connections", () => {
+    const s = connect(withLocations(), "cb", "c", "b");
+    expect(s.connections).toEqual([{ id: "cb", fromId: "c", toId: "b" }]);
   });
 
-  it("removes connections when a location is removed", () => {
+  it("rejects an exact duplicate but allows the reverse direction", () => {
+    const s = connect(withLocations(), "ab", "a", "b");
+    expect(connect(s, "dup", "a", "b")).toBe(s);
+    expect(connect(s, "ba", "b", "a").connections.map((c) => c.id)).toEqual(["ab", "ba"]);
+  });
+
+  it("rejects self-connections, unknown locations, and reused ids", () => {
+    const s = withLocations();
+    expect(connect(s, "self", "a", "a")).toBe(s);
+    expect(connect(s, "missing", "a", "missing")).toBe(s);
+    const once = connect(s, "x", "a", "b");
+    expect(connect(once, "x", "b", "c")).toBe(once);
+  });
+
+  it("removes connections", () => {
+    let s = connect(withLocations(), "ab", "a", "b");
+    s = reducer(s, { type: "removeConnection", id: "ab" });
+    expect(s.connections).toEqual([]);
+  });
+
+  it("removes a location's incoming and outgoing connections with it", () => {
     let s = withLocations();
-    s = reducer(s, { type: "addConnection", id: "ab", fromId: "a", toId: "b" });
-    s = reducer(s, { type: "addConnection", id: "bc", fromId: "b", toId: "c" });
+    s = connect(s, "ab", "a", "b");
+    s = connect(s, "ca", "c", "a");
+    s = connect(s, "bc", "b", "c");
     s = reducer(s, { type: "removeLocation", id: "a" });
-    expect(s.connections.map((connection) => connection.id)).toEqual(["bc"]);
+    expect(s.connections.map((c) => c.id)).toEqual(["bc"]);
   });
 
   it("removes connections whose locations are deleted with a type", () => {
-    let s = withLocations();
-    s = reducer(s, { type: "addConnection", id: "ac", fromId: "a", toId: "c" });
+    let s = connect(withLocations(), "ac", "a", "c");
     s = reducer(s, { type: "removeType", id: "factory" });
     expect(s.connections).toEqual([]);
+  });
+
+  it("keeps connections when a type's locations are moved to another type", () => {
+    let s = connect(withLocations(), "ac", "a", "c");
+    s = reducer(s, { type: "removeType", id: "factory", reassignTo: "retail-store" });
+    expect(s.connections).toEqual([{ id: "ac", fromId: "a", toId: "c" }]);
+  });
+});
+
+describe("working hours in the reducer", () => {
+  it("stores a copy of the hours given when adding a location", () => {
+    const hours = cloneHours(HOURS_PRESETS[2].hours);
+    const s = reducer(INITIAL_STATE, {
+      type: "addLocation",
+      id: "a",
+      createdAt: "t",
+      location: place("factory", { hours }),
+    });
+    hours.mon = [];
+    expect(s.locations[0]?.hours?.mon).toEqual([{ open: 0, close: 1440 }]);
+  });
+
+  it("refuses to add or update a location with invalid hours", () => {
+    const bad = cloneHours(DEFAULT_HOURS);
+    bad.tue = [{ open: 600, close: 600 }];
+    expect(
+      reducer(INITIAL_STATE, {
+        type: "addLocation",
+        id: "a",
+        createdAt: "t",
+        location: place("factory", { hours: bad }),
+      }),
+    ).toBe(INITIAL_STATE);
+    const s = withLocations();
+    expect(reducer(s, { type: "updateLocation", id: "a", hours: bad })).toBe(s);
+  });
+
+  it("updates hours", () => {
+    const s = reducer(withLocations(), {
+      type: "updateLocation",
+      id: "a",
+      hours: HOURS_PRESETS[1].hours,
+    });
+    expect(s.locations[0]?.hours?.sun).toEqual([{ open: 540, close: 1020 }]);
+  });
+});
+
+describe("hours helpers", () => {
+  it("summarises consecutive identical days", () => {
+    expect(summarizeHours(DEFAULT_HOURS)).toEqual(["Mon–Fri 09:00–17:00", "Sat–Sun Closed"]);
+    expect(summarizeHours(HOURS_PRESETS[2].hours)).toEqual(["Every day 24 hours"]);
+    const split = cloneHours(DEFAULT_HOURS);
+    split.wed = [{ open: 1320, close: 120 }];
+    expect(summarizeHours(split)).toEqual([
+      "Mon–Tue 09:00–17:00",
+      "Wed 22:00–02:00 (+1)",
+      "Thu–Fri 09:00–17:00",
+      "Sat–Sun Closed",
+    ]);
+  });
+
+  it("accepts overnight ranges and rejects empty, out-of-range, or overlapping ones", () => {
+    const h = cloneHours(DEFAULT_HOURS);
+    h.fri = [{ open: 1320, close: 120 }];
+    expect(hoursError(h)).toBeNull();
+    h.fri = [{ open: 540, close: 540 }];
+    expect(hoursError(h)).toMatch(/^Fri:/);
+    h.fri = [{ open: 540, close: 1500 }];
+    expect(hoursError(h)).toMatch(/out of range/);
+    h.fri = [
+      { open: 540, close: 720 },
+      { open: 700, close: 900 },
+    ];
+    expect(hoursError(h)).toMatch(/overlap/);
+  });
+
+  it("parses saved hours and rejects malformed ones", () => {
+    expect(parseHours(JSON.parse(JSON.stringify(DEFAULT_HOURS)))).toEqual(DEFAULT_HOURS);
+    expect(parseHours({ mon: [] })).toBeNull();
+    expect(parseHours({ ...DEFAULT_HOURS, mon: [{ open: "9", close: 17 }] })).toBeNull();
+  });
+});
+
+describe("graph helpers", () => {
+  const connections = [
+    { id: "ab", fromId: "a", toId: "b" },
+    { id: "bc", fromId: "b", toId: "c" },
+    { id: "cb", fromId: "c", toId: "b" },
+  ];
+
+  it("finds connections by direction", () => {
+    expect(findConnection(connections, "a", "b")?.id).toBe("ab");
+    expect(findConnection(connections, "b", "a")).toBeUndefined();
+  });
+
+  it("lists outgoing, incoming, and total degree", () => {
+    expect(outgoing(connections, "b").map((c) => c.id)).toEqual(["bc"]);
+    expect(incoming(connections, "b").map((c) => c.id)).toEqual(["ab", "cb"]);
+    expect(connectionsOf(connections, "b").map((c) => otherEnd(c, "b"))).toEqual(["a", "c", "c"]);
+    expect(Object.fromEntries(degrees(connections))).toEqual({ a: 1, b: 3, c: 2 });
+  });
+});
+
+describe("line geometry", () => {
+  const a = { lat: 51.5, lng: -0.12 };
+  const b = { lat: 51.52, lng: -0.08 };
+
+  it("stops the line a fixed number of screen pixels before the destination", () => {
+    for (const zoom of [10, 14, 17]) {
+      const tip = pointBeforeEnd(a, b, zoom, 13)!;
+      expect(screenDistance(tip, b, zoom)).toBeCloseTo(13, 6);
+      expect(screenDistance(a, tip, zoom) + 13).toBeCloseTo(screenDistance(a, b, zoom), 6);
+    }
+  });
+
+  it("returns null when the points are closer than the trim on screen", () => {
+    expect(pointBeforeEnd(a, b, 2, 13)).toBeNull();
+  });
+
+  it("midpoint is equidistant on screen", () => {
+    const m = visualMidpoint({ lat: 0, lng: 0 }, { lat: 60, lng: 10 });
+    expect(screenDistance({ lat: 0, lng: 0 }, m, 5)).toBeCloseTo(
+      screenDistance(m, { lat: 60, lng: 10 }, 5),
+      6,
+    );
   });
 });
 
@@ -172,12 +327,36 @@ describe("parseState", () => {
       { id: "valid", fromId: "a", toId: "b" },
       { id: "self", fromId: "a", toId: "a" },
       { id: "orphan", fromId: "a", toId: "missing" },
-      { id: "valid", fromId: "b", toId: "c" },
+      { id: "valid", fromId: "b", toId: "c" }, // duplicate id
+      { id: "again", fromId: "a", toId: "b" }, // same direction as "valid"
     ];
     expect(parseState(raw)).toEqual({
       ...s,
       connections: [{ id: "valid", fromId: "a", toId: "b" }],
     });
+  });
+
+  it("keeps both directions of a pair", () => {
+    const raw = JSON.parse(JSON.stringify(withLocations()));
+    raw.connections = [
+      { id: "ab", fromId: "a", toId: "b" },
+      { id: "ba", fromId: "b", toId: "a" },
+    ];
+    expect(parseState(raw)?.connections.map((c) => c.id)).toEqual(["ab", "ba"]);
+  });
+
+  it("reads the short-lived undirected { aId, bId } format as aId → bId", () => {
+    const raw = JSON.parse(JSON.stringify(withLocations()));
+    raw.connections = [{ id: "x", aId: "b", bId: "c" }];
+    expect(parseState(raw)?.connections).toEqual([{ id: "x", fromId: "b", toId: "c" }]);
+  });
+
+  it("loads locations saved before working hours existed with hours not set", () => {
+    const raw = JSON.parse(JSON.stringify(withLocations()));
+    delete raw.locations[0].hours;
+    raw.locations[1].hours = { mon: "garbage" };
+    const parsed = parseState(raw)!;
+    expect(parsed.locations.map((l) => l.hours === null)).toEqual([true, true, false]);
   });
 
   it("returns null for things that aren't demo state", () => {

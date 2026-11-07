@@ -2,11 +2,13 @@
 
 import { useState, type FormEvent } from "react";
 
+import { cloneHours, DEFAULT_HOURS, hoursError, type WeeklyHours } from "@/lib/demo/hours";
 import { MAX_LOCATION_NAME_LENGTH } from "@/lib/demo/reducer";
 import { demoActions } from "@/lib/demo/store";
 import type { LocationType } from "@/lib/demo/types";
 
 import { Button, FieldLabel, SectionLabel, TextInput } from "./controls";
+import { HoursEditor } from "./hours-editor";
 import { PlaceSearch, type PickedPlace } from "./place-search";
 import { Select } from "./select";
 
@@ -25,6 +27,9 @@ export function AddLocationForm({
   // Remember the last type used: people tend to add several of the same kind in a row.
   const [chosenTypeId, setChosenTypeId] = useState<string | undefined>(undefined);
   const typeId = types.some((t) => t.id === chosenTypeId) ? chosenTypeId : types[0]?.id;
+  // Also kept between additions: a business's sites often share the same hours.
+  const [hours, setHours] = useState<WeeklyHours>(() => cloneHours(DEFAULT_HOURS));
+  const hoursProblem = hoursError(hours);
 
   function onPick(place: PickedPlace) {
     setPicked(place);
@@ -38,7 +43,7 @@ export function AddLocationForm({
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (!picked || !typeId) return;
+    if (!picked || !typeId || hoursProblem) return;
     const id = demoActions.addLocation({
       name: name.trim() || picked.name,
       address: picked.address,
@@ -46,6 +51,7 @@ export function AddLocationForm({
       lat: picked.lat,
       lng: picked.lng,
       typeId,
+      hours,
     });
     reset();
     onAdded(id);
@@ -105,7 +111,18 @@ export function AddLocationForm({
             <p className="text-sm">Create a location type below first.</p>
           )}
 
-          <Button type="submit" className="w-full justify-between" disabled={!typeId}>
+          <fieldset className="space-y-2">
+            <legend className="mb-2 font-mono text-[11px] uppercase tracking-wider opacity-70">
+              Working hours
+            </legend>
+            <HoursEditor value={hours} onChange={setHours} />
+          </fieldset>
+
+          <Button
+            type="submit"
+            className="w-full justify-between"
+            disabled={!typeId || !!hoursProblem}
+          >
             Add to map <span aria-hidden>↘</span>
           </Button>
         </form>
