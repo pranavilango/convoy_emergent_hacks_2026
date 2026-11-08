@@ -105,6 +105,71 @@ describe("DemoApp without an API key", () => {
   });
 });
 
+describe("solar allocation analysis", () => {
+  it("only enables Analyze when every location kind exists and shows the returned analysis", async () => {
+    const allocation = {
+      networkSummary: "A connected supply chain.",
+      recommendations: [
+        {
+          locationId: "clinic",
+          locationName: "Mwanza Clinic",
+          kind: "clinic",
+          estimatedWaitHoursBefore: 12,
+          estimatedWaitHoursAfter: 4,
+          rationale: "It is the final care point in the network.",
+        },
+        {
+          locationId: "warehouse",
+          locationName: "Central Store",
+          kind: "warehouse",
+          estimatedWaitHoursBefore: 8,
+          estimatedWaitHoursAfter: 3,
+          rationale: "It supplies the clinic.",
+        },
+      ],
+      limitations: ["Wait times are hypothetical estimates."],
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ allocation, analysis: "Mwanza Clinic is the top priority." }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DemoApp />);
+
+    const analyzeButton = screen.getByRole("button", { name: "Analyze" });
+    expect(analyzeButton).toBeDisabled();
+
+    act(() => {
+      addLocation("port", "Dar Port");
+      addLocation("warehouse", "Central Store");
+    });
+    expect(analyzeButton).toBeDisabled();
+
+    act(() => {
+      addLocation("clinic", "Mwanza Clinic");
+    });
+    expect(analyzeButton).toBeEnabled();
+
+    fireEvent.click(analyzeButton);
+    expect(await screen.findByRole("dialog", { name: "Network analysis" })).toBeInTheDocument();
+    expect(await screen.findByText("Mwanza Clinic is the top priority.")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Wait times are hypothetical AI estimates, not measured outcomes/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Estimated supply wait: 12 h before → 4 h after")).toBeInTheDocument();
+    expect(screen.getByText("Estimated supply wait: 8 h before → 3 h after")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0]?.[1]?.body)).toContain("Mwanza Clinic");
+
+    fireEvent.click(screen.getByRole("button", { name: "Close network analysis" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
 describe("location types", () => {
   it("lists the three fixed types, with their map letter and how many are on the map", () => {
     act(() => {

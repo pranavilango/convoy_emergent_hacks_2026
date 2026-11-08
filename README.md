@@ -81,6 +81,43 @@ discarded on load.
 
 Without a key the demo still loads, shows how to configure it, and lists the location types.
 
+### Solar allocation analysis
+
+On `/demo`, add at least one port, warehouse, and clinic to enable **Analyze**. The button opens a
+popup while the server makes two Gemini calls through the Google AI Studio API: the first generates
+a temporary JSON response recommending exactly two warehouses or clinics to make open 24/7, with
+estimated supply wait times before and after; the second explains those recommendations. The popup
+shows the sites, wait-time estimates, and analysis.
+
+Wait times are hypothetical AI estimates, not measured outcomes. The demo does not collect supply
+wait-time records, staffing, demand, or operating costs, so validate recommendations against real
+planning data before acting on them.
+
+The server-side endpoint accepts the current network:
+
+```http
+POST /api/solar-allocation
+Content-Type: application/json
+
+{
+  "network": {
+    "locations": [
+      { "id": "clinic-1", "name": "Clinic A", "kind": "clinic", "portMode": null }
+    ],
+    "connections": []
+  }
+}
+```
+
+The response contains the generated `allocation` JSON and its `analysis`. The allocation has a
+`recommendations` array with exactly two entries, each including a `locationId`, `locationName`,
+`kind` (`warehouse` or `clinic`), `estimatedWaitHoursBefore`, `estimatedWaitHoursAfter`, and
+`rationale`. Wait-time values are hours. Set `GEMINI_API_KEY` in
+`.env.local` for local development and in the Vercel project environment for deployment. The key
+must not use a `NEXT_PUBLIC_` prefix. Both calls default to `gemini-3.5-flash-lite`; set
+`GEMINI_MODEL` if your AI Studio project uses a different available model. Network details are sent
+to Google's Gemini API for generation and analysis.
+
 ### Map style
 
 The demo map is Google's flat road map in its built-in **dark** color scheme, set in code

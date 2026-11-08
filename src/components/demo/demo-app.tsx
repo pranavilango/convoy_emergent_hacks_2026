@@ -10,7 +10,11 @@ import { demoActions, useDemoState } from "@/lib/demo/store";
 import type { Location } from "@/lib/demo/types";
 
 import { AddLocationForm } from "./add-location-form";
-import { focusRing } from "./controls";
+import {
+  AllocationAnalysisDialog,
+  type AllocationAnalysisResult,
+} from "./allocation-analysis-dialog";
+import { Button, focusRing, SectionLabel } from "./controls";
 import { ConnectionsManager } from "./connections-manager";
 import { KindMark, LocationKinds } from "./location-kinds";
 import { LocationList } from "./location-list";
@@ -35,6 +39,14 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
   const [rawConnectingFrom, setConnectingFrom] = useState<string | null>(null);
   const [focus, setFocus] = useState<FocusRequest | null>(null);
   const [problem, setProblem] = useState<MapProblem | null>(apiKey ? null : "unconfigured");
+  const [analysisStatus, setAnalysisStatus] = useState<"idle" | "loading" | "ready" | "error">(
+    "idle",
+  );
+  const [analysisResult, setAnalysisResult] = useState<AllocationAnalysisResult | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const hasRequiredLocationKinds = (["port", "warehouse", "clinic"] as const).every((kind) =>
+    locations.some((location) => location.kind === kind),
+  );
 
   useEffect(() => {
     if (!apiKey) return;
@@ -101,6 +113,54 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
     setConnectingFrom(null);
   }
 
+  async function analyzeNetwork() {
+    setAnalysisStatus("loading");
+    setAnalysisResult(null);
+    setAnalysisError(null);
+
+    try {
+      const response = await fetch("/api/solar-allocation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          network: {
+            locations: locations.map(({ id, name, kind, portMode }) => ({
+              id,
+              name,
+              kind,
+              portMode,
+            })),
+            connections: connections.map(({ fromId, toId }) => ({ fromId, toId })),
+          },
+        }),
+      });
+      const payload: unknown = await response.json();
+
+      if (!response.ok) {
+        const message =
+          typeof payload === "object" &&
+          payload !== null &&
+          "error" in payload &&
+          typeof payload.error === "string"
+            ? payload.error
+            : "Unable to analyze the network right now.";
+        throw new Error(message);
+      }
+
+      if (!isAllocationAnalysisResult(payload)) {
+        throw new Error("The analysis service returned an invalid response.");
+      }
+
+      setAnalysisResult(payload);
+      setAnalysisStatus("ready");
+    } catch (error) {
+      setAnalysisError(
+        error instanceof Error ? error.message : "Unable to analyze the network right now.",
+      );
+      setAnalysisStatus("error");
+    }
+  }
+
   /** In connect mode, clicking a square toggles the supply link origin → that square. */
   function toggleConnection(targetId: string) {
     const origin = connectingLocation;
@@ -134,6 +194,26 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
         selectedConnectionId={selection?.kind === "connection" ? selection.id : null}
         onSelectConnection={selectConnectionFromPanel}
       />
+      <section aria-label="Solar allocation analysis" className="space-y-4">
+        <SectionLabel index="04">Analysis</SectionLabel>
+        <p className="text-sm leading-relaxed opacity-75">
+          Get two suggested 24/7 warehouses or clinics with estimated supply wait times before and
+          after, then analyze the results.
+        </p>
+        <Button
+          onClick={analyzeNetwork}
+          disabled={!hasRequiredLocationKinds || analysisStatus === "loading"}
+          aria-busy={analysisStatus === "loading"}
+          className="w-full"
+        >
+          {analysisStatus === "loading" ? "Analyzing…" : "Analyze"}
+        </Button>
+        {!hasRequiredLocationKinds && (
+          <p className="text-xs opacity-70">
+            Add at least one port, warehouse, and clinic to enable analysis.
+          </p>
+        )}
+      </section>
     </div>
   );
 
@@ -185,6 +265,16 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
           {panel}
         </aside>
       </div>
+      {analysisStatus !== "idle" && (
+        <AllocationAnalysisDialog
+          status={analysisStatus}
+          result={analysisResult}
+          error={analysisError}
+          onClose={() => {
+            if (analysisStatus !== "loading") setAnalysisStatus("idle");
+          }}
+        />
+      )}
     </div>
   );
 
@@ -193,6 +283,54 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
     <APIProvider apiKey={apiKey} onError={() => setProblem("load-failed")}>
       {layout}
     </APIProvider>
+  );
+}
+
+function isAllocationAnalysisResult(value: unknown): value is AllocationAnalysisResult {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("analysis" in value) ||
+    typeof value.analysis !== "string" ||
+    !("allocation" in value) ||
+    typeof value.allocation !== "object" ||
+    value.allocation === null
+  ) {
+    return false;
+  }
+
+  const allocation = value.allocation;
+  return (
+    "networkSummary" in allocation &&
+    typeof allocation.networkSummary === "string" &&
+    "recommendations" in allocation &&
+    Array.isArray(allocation.recommendations) &&
+    allocation.recommendations.length === 2 &&
+    allocation.recommendations.every(
+      (recommendation) =>
+        typeof recommendation === "object" &&
+        recommendation !== null &&
+        "locationId" in recommendation &&
+        typeof recommendation.locationId === "string" &&
+        "locationName" in recommendation &&
+        typeof recommendation.locationName === "string" &&
+        "kind" in recommendation &&
+        (recommendation.kind === "warehouse" || recommendation.kind === "clinic") &&
+        "estimatedWaitHoursBefore" in recommendation &&
+        typeof recommendation.estimatedWaitHoursBefore === "number" &&
+        Number.isFinite(recommendation.estimatedWaitHoursBefore) &&
+        recommendation.estimatedWaitHoursBefore >= 0 &&
+        "estimatedWaitHoursAfter" in recommendation &&
+        typeof recommendation.estimatedWaitHoursAfter === "number" &&
+        Number.isFinite(recommendation.estimatedWaitHoursAfter) &&
+        recommendation.estimatedWaitHoursAfter >= 0 &&
+        recommendation.estimatedWaitHoursAfter < recommendation.estimatedWaitHoursBefore &&
+        "rationale" in recommendation &&
+        typeof recommendation.rationale === "string",
+    ) &&
+    "limitations" in allocation &&
+    Array.isArray(allocation.limitations) &&
+    allocation.limitations.every((limitation) => typeof limitation === "string")
   );
 }
 
