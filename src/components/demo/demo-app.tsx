@@ -11,6 +11,7 @@ import { createSampleNetwork } from "@/lib/demo/sample-network";
 import { canSupply, KIND_INFO, LOCATION_KINDS, SUPPLIES } from "@/lib/demo/kinds";
 import { formatPeopleHours, totalClinicPopulation } from "@/lib/demo/population";
 import { demoActions, useDemoState } from "@/lib/demo/store";
+import { closeTour, openTour, useTourOpen } from "@/lib/demo/tour";
 import type { Location } from "@/lib/demo/types";
 import { analysisIssues } from "@/lib/solar-allocation/readiness";
 
@@ -22,6 +23,7 @@ import {
 } from "./allocation-analysis-dialog";
 import { Button, focusRing, SectionLabel } from "./controls";
 import { ConnectionsManager } from "./connections-manager";
+import { GuidedTour } from "./guided-tour";
 import { KindMark, LocationKinds } from "./location-kinds";
 import { LocationList } from "./location-list";
 import { connectionCountLabel, MapView, type FocusRequest } from "./map-view";
@@ -41,6 +43,7 @@ declare global {
 
 export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) {
   const { locations, connections, budget } = useDemoState();
+  const tourOpen = useTourOpen();
   const [rawSelection, setSelection] = useState<Selection>(null);
   const [rawConnectingFrom, setConnectingFrom] = useState<string | null>(null);
   const [focus, setFocus] = useState<FocusRequest | null>(null);
@@ -216,30 +219,41 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
   const panel = (
     // Extra room at the bottom on phones, so the floating sample button never hides the end.
     <div className="space-y-12 px-6 pt-8 pb-24 md:px-8 md:pb-8">
-      {/* The budget comes first: it caps how many sites can get solar. */}
-      <BudgetSection budget={budget} />
-      <AddLocationForm
-        searchAvailable={problem === null}
-        onAdded={(id) => {
-          setConnectingFrom(null);
-          setSelection({ kind: "location", id });
-        }}
-      />
-      <LocationKinds locations={locations} />
-      <LocationList
-        locations={locations}
-        connections={connections}
-        selectedId={selection?.kind === "location" ? selection.id : null}
-        onSelect={selectLocationFromPanel}
-        {...(problem ? {} : { onStartConnecting: startConnecting })}
-      />
-      <ConnectionsManager
-        locations={locations}
-        connections={connections}
-        selectedConnectionId={selection?.kind === "connection" ? selection.id : null}
-        onSelectConnection={selectConnectionFromPanel}
-      />
-      <section aria-labelledby="analysis-heading" className="space-y-4">
+      {/* The budget comes first: it caps how many sites can get solar. Each part is wrapped in a
+          `data-tour` box so the guided tour can point at it. */}
+      <div data-tour="budget">
+        <BudgetSection budget={budget} />
+      </div>
+      <div data-tour="add">
+        <AddLocationForm
+          searchAvailable={problem === null}
+          onAdded={(id) => {
+            setConnectingFrom(null);
+            setSelection({ kind: "location", id });
+          }}
+        />
+      </div>
+      <div data-tour="kinds">
+        <LocationKinds locations={locations} />
+      </div>
+      <div data-tour="locations">
+        <LocationList
+          locations={locations}
+          connections={connections}
+          selectedId={selection?.kind === "location" ? selection.id : null}
+          onSelect={selectLocationFromPanel}
+          {...(problem ? {} : { onStartConnecting: startConnecting })}
+        />
+      </div>
+      <div data-tour="connections">
+        <ConnectionsManager
+          locations={locations}
+          connections={connections}
+          selectedConnectionId={selection?.kind === "connection" ? selection.id : null}
+          onSelectConnection={selectConnectionFromPanel}
+        />
+      </div>
+      <section aria-labelledby="analysis-heading" data-tour="analysis" className="space-y-4">
         <h2 id="analysis-heading">
           <SectionLabel index="06">Analysis</SectionLabel>
         </h2>
@@ -342,20 +356,32 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
   );
 
   const layout = (
-    <div className="theme-night fixed inset-0 flex flex-col overflow-hidden bg-background font-display text-foreground">
-      <DemoHeader count={locations.length} connectionCount={connections.length} />
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:grid md:grid-cols-[minmax(22rem,26rem)_1fr] md:grid-rows-[minmax(0,1fr)]">
-        <section aria-label="Map" className="order-1 h-[55vh] md:order-2 md:h-auto md:min-h-0">
+    // `demo-shell` locks the window's own scroll on desktop (globals.css); only the editor scrolls.
+    <div className="demo-shell theme-night relative flex min-h-dvh flex-col bg-background font-display text-foreground md:h-dvh md:overflow-hidden">
+      <DemoHeader
+        count={locations.length}
+        connectionCount={connections.length}
+        onStartTour={openTour}
+      />
+      <div className="flex flex-1 flex-col md:grid md:min-h-0 md:grid-cols-[minmax(22rem,26rem)_1fr] md:grid-rows-[minmax(0,1fr)] md:overflow-hidden">
+        <section
+          aria-label="Map"
+          data-tour="map"
+          className="order-1 h-[55vh] md:order-2 md:h-auto md:min-h-0"
+        >
           {mapArea}
         </section>
         <aside
           aria-label="Network editor"
-          className="order-2 min-h-0 overflow-y-auto border-foreground/30 md:order-1 md:border-r"
+          // `relative` keeps absolutely positioned bits inside (e.g. screen-reader-only labels),
+          // so they scroll with the editor instead of stretching the window below the page.
+          className="relative order-2 min-h-0 border-foreground/30 md:order-1 md:overflow-y-auto md:border-r"
         >
           {panel}
         </aside>
       </div>
       <SampleButton onClick={loadSample} />
+      {tourOpen && <GuidedTour onClose={closeTour} />}
       {analysisStatus !== "idle" && (
         <AllocationAnalysisDialog
           status={analysisStatus}
@@ -435,6 +461,7 @@ function SampleButton({ onClick }: { onClick: () => void }) {
     <button
       type="button"
       onClick={onClick}
+      data-tour="sample"
       className={`fixed right-4 bottom-4 z-20 rounded-sm border border-aqua bg-ink/90 px-4 py-2.5 font-mono text-[11px] uppercase tracking-wider text-aqua shadow-lg backdrop-blur-sm transition-colors hover:bg-aqua hover:text-night md:right-16 md:bottom-9 ${focusRing}`}
     >
       Load Ghana sample network
@@ -486,7 +513,15 @@ function ConnectBanner({
   );
 }
 
-function DemoHeader({ count, connectionCount }: { count: number; connectionCount: number }) {
+function DemoHeader({
+  count,
+  connectionCount,
+  onStartTour,
+}: {
+  count: number;
+  connectionCount: number;
+  onStartTour: () => void;
+}) {
   return (
     <header className="flex items-center justify-between border-b border-foreground/30 px-6 py-4 md:px-10">
       <div className="flex items-center gap-6">
@@ -501,16 +536,39 @@ function DemoHeader({ count, connectionCount }: { count: number; connectionCount
           _Demo / Network
         </span>
       </div>
-      <div className="flex items-center gap-6">
+      <div className="flex items-center gap-4 sm:gap-6">
         <span className="hidden font-mono text-[11px] uppercase tracking-wider md:inline">
           {String(count).padStart(2, "0")} {count === 1 ? "location" : "locations"} ·{" "}
           {connectionCountLabel(connectionCount)}
         </span>
+        {/* Always outlined in aqua so it's easy to spot; a white underline on hover. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          data-tour="tour"
+          onClick={onStartTour}
+          className="border border-aqua px-2.5 py-1 decoration-white"
+        >
+          Tour
+        </Button>
         <Link
           href="/"
-          className={`rounded-sm border border-foreground px-4 py-2 text-sm transition-colors hover:bg-foreground hover:text-background ${focusRing}`}
+          className={`inline-flex items-center gap-2 rounded-sm border border-foreground px-4 py-2 text-sm transition-colors hover:bg-foreground hover:text-background ${focusRing}`}
         >
-          ← Back to site
+          {/* Drawn rather than typed: the font's ← sits low, off the text's centre line. */}
+          <svg
+            aria-hidden
+            viewBox="0 0 16 16"
+            className="h-3.5 w-3.5 shrink-0"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M14 8H2M7 3 2 8l5 5" />
+          </svg>
+          Back to site
         </Link>
       </div>
     </header>
