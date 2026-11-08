@@ -1,5 +1,6 @@
 import {
   analyzeSolarAllocation,
+  generateBudgetCurve,
   generateSolarAllocation,
   GeminiApiError,
   isJsonObject,
@@ -43,10 +44,13 @@ export async function POST(request: Request) {
 
   let stage: "Rust backend" | "Gemini" = "Rust backend";
   try {
-    const allocation = await generateSolarAllocation(body["network"], body["n"] as number);
+    const network = body["network"];
+    const allocation = await generateSolarAllocation(network, body["n"] as number);
+    // The best sites for 1, 2, … units, so the result can show what each extra unit buys.
+    const steps = await generateBudgetCurve(network, allocation);
     stage = "Gemini";
-    const analysis = await analyzeSolarAllocation(body["network"], allocation);
-    return Response.json({ allocation, analysis });
+    const analysis = await analyzeSolarAllocation(network, allocation, steps);
+    return Response.json({ allocation, steps, analysis });
   } catch (error) {
     console.error("Solar allocation analysis failed:", error);
 

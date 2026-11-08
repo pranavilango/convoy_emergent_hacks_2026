@@ -107,64 +107,89 @@ describe("DemoApp without an API key", () => {
 });
 
 describe("solar allocation analysis", () => {
-  it("only enables Analyze when every location kind exists and shows the returned analysis", async () => {
+  it("lists what blocks Analyze, then shows the optimizer's result and keeps it until edits", async () => {
+    render(<DemoApp />);
+    const analyzeButton = screen.getByRole("button", { name: "Analyze" });
+    const checklist = () => screen.getByRole("list", { name: "Before you analyze" });
+    expect(analyzeButton).toBeDisabled();
+    expect(
+      within(checklist()).getByText("Add at least one port, one warehouse, one clinic."),
+    ).toBeInTheDocument();
+
+    const ids = { p: "", w: "", c: "" };
+    act(() => {
+      ids.p = addLocation("port", "Dar Port");
+      ids.w = addLocation("warehouse", "Central Store");
+      ids.c = addLocation("clinic", "Mwanza Clinic");
+    });
+    // Unlinked sites are named, so the fix is obvious.
+    expect(
+      within(checklist()).getByText("Dar Port doesn't supply any warehouse yet."),
+    ).toBeInTheDocument();
+    expect(
+      within(checklist()).getByText("Mwanza Clinic has no warehouse supplying it."),
+    ).toBeInTheDocument();
+    expect(analyzeButton).toBeDisabled();
+
+    act(() => {
+      demoActions.connectLocations(ids.p, ids.w);
+      demoActions.connectLocations(ids.w, ids.c);
+    });
+    expect(
+      within(checklist())
+        .getAllByRole("listitem")
+        .map((li) => li.textContent),
+    ).toEqual(["·Enter the cost per solar unit and the total budget."]);
+
+    act(() => {
+      demoActions.setUnitCost(1);
+      demoActions.setTotalBudget(2);
+    });
+    expect(screen.queryByRole("list", { name: "Before you analyze" })).toBeNull();
+    expect(analyzeButton).toBeEnabled();
+
     const allocation = {
-      selected: ["clinic", "warehouse"],
+      selected: [ids.w, ids.c],
       n: 2,
       solver: "exact",
       baseline_weighted_hours: 21.64,
       optimized_weighted_hours: 11.54,
     };
+    const steps = [
+      { units: 1, selected: [ids.c], weighted_hours: 15 },
+      { units: 2, selected: [ids.w, ids.c], weighted_hours: 11.54 },
+    ];
     const fetchMock = vi
       .fn()
       .mockResolvedValue(
         new Response(
-          JSON.stringify({ allocation, analysis: "These sites reduce modeled delivery times." }),
+          JSON.stringify({ allocation, steps, analysis: "Mwanza Clinic serves the most people." }),
           { status: 200 },
         ),
       );
     vi.stubGlobal("fetch", fetchMock);
-    render(<DemoApp />);
-
-    const analyzeButton = screen.getByRole("button", { name: "Analyze" });
-    expect(analyzeButton).toBeDisabled();
-
-    act(() => {
-      addLocation("port", "Dar Port");
-      addLocation("warehouse", "Central Store");
-    });
-    expect(analyzeButton).toBeDisabled();
-
-    act(() => {
-      addLocation("clinic", "Mwanza Clinic");
-    });
-    act(() => {
-      demoActions.setUnitCost(1);
-      demoActions.setTotalBudget(2);
-    });
-    expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "null").state.budget).toEqual({
-      unitCost: 1,
-      total: 2,
-    });
-    expect(analyzeButton).toBeEnabled();
-
     fireEvent.click(analyzeButton);
-    expect(await screen.findByRole("dialog", { name: "Network analysis" })).toBeInTheDocument();
+
+    const dialog = await screen.findByRole("dialog", { name: "Network analysis" });
     expect(
-      await screen.findByText("These sites reduce modeled delivery times."),
+      await within(dialog).findByText("Mwanza Clinic serves the most people."),
     ).toBeInTheDocument();
-    expect(screen.getByText(/Convoy selected 2 of 2 requested solar units/)).toBeInTheDocument();
-    // The popup never names the search strategy (exact vs. greedy).
-    expect(screen.getByRole("dialog").textContent).not.toMatch(/solver|exact|greedy/i);
-    expect(screen.getByText("Mwanza Clinic")).toBeInTheDocument();
-    expect(screen.getByText("Central Store")).toBeInTheDocument();
-    expect(screen.getByText(/21\.64 h before upgrades/)).toBeInTheDocument();
-    expect(screen.getByText(/11\.54 h after upgrades/)).toBeInTheDocument();
-    expect(screen.getByText("10.10 h")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(within(dialog).getByText("−10.1 h")).toBeInTheDocument();
+    expect(within(dialog).getByText(/21\.6 h → 11\.5 h · 47% shorter/)).toBeInTheDocument();
+    // Each chosen site: its hours now → 24/7, people served, and where it's supplied from.
+    const chosen = within(dialog).getByRole("region", { name: "_Chosen for solar" });
+    expect(within(chosen).getAllByText("→ open 24/7")).toHaveLength(2);
+    expect(within(chosen).getByText(/Serves 1,200 people/)).toBeInTheDocument();
+    expect(within(chosen).getByText(/From Dar Port · \d+ km/)).toBeInTheDocument();
+    // What each unit buys.
+    const curve = within(dialog).getByRole("region", { name: "_What each solar unit buys" });
+    expect(within(curve).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(curve).getByText("15.0 h")).toBeInTheDocument();
+    // The popup never names the search strategy.
+    expect(dialog.textContent).not.toMatch(/solver|exact|greedy/i);
+
     const sent = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
-    expect(sent.network.locations.map((l: { name: string }) => l.name)).toContain("Mwanza Clinic");
-    // The demo's details go along: hours, clinic population.
+    expect(sent.n).toBe(2);
     expect(sent.network.locations).toContainEqual(
       expect.objectContaining({
         name: "Mwanza Clinic",
@@ -173,8 +198,19 @@ describe("solar allocation analysis", () => {
       }),
     );
 
+    // Closing keeps the result to reopen…
     fireEvent.click(screen.getByRole("button", { name: "Close network analysis" }));
     expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByText("Last result: 2 sites lit on the map, −10.1 h")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "View result" }));
+    expect(screen.getByRole("dialog", { name: "Network analysis" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close network analysis" }));
+
+    // …until the network changes.
+    act(() => demoActions.renameLocation(ids.c, "Mwanza Regional Clinic"));
+    expect(
+      screen.getByText("Out of date: the network changed since the last analysis."),
+    ).toBeInTheDocument();
   });
 });
 

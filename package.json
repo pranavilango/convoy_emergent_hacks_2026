@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "next dev",
+    "dev:engine": "cargo run --release",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",

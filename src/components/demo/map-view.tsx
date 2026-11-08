@@ -45,6 +45,7 @@ export function MapView({
   mapId,
   locations,
   connections,
+  poweredIds,
   selection,
   connectingFrom,
   focus,
@@ -57,6 +58,8 @@ export function MapView({
   mapId: string;
   locations: Location[];
   connections: Connection[];
+  /** Sites the latest (still current) analysis chose for solar; they light up. */
+  poweredIds: ReadonlySet<string> | null;
   selection: Selection;
   /** When set, clicking a location this one can supply connects (or disconnects) it. */
   connectingFrom: string | null;
@@ -155,6 +158,7 @@ export function MapView({
             key={location.id}
             location={location}
             state={state}
+            powered={poweredIds?.has(location.id) ?? false}
             size={size}
             onClick={() => {
               if (!connectingFrom) onSelect({ kind: "location", id: location.id });
@@ -171,6 +175,11 @@ export function MapView({
           </CardLabel>
           <p className="mt-1.5 text-base leading-tight tracking-tight">{selectedLocation.name}</p>
           <p className="mt-1 text-xs leading-snug opacity-60">{selectedLocation.address}</p>
+          {poweredIds?.has(selectedLocation.id) && (
+            <p className="mt-2 font-mono text-[10px] uppercase tracking-wider text-aqua">
+              Chosen for solar · open 24/7
+            </p>
+          )}
           {selectedLocation.kind === "clinic" && (
             <p className="mt-2 text-sm">
               {selectedLocation.population === null ? (
@@ -262,10 +271,13 @@ function LocationSquare({
   location,
   state,
   size,
+  powered,
   onClick,
 }: {
   location: Location;
   state: SquareState;
+  /** Chosen for solar by the latest analysis: an aquamarine ring that powers on. */
+  powered: boolean;
   /** Side in px at the current zoom (selected squares are a little bigger). */
   size: number;
   onClick: () => void;
@@ -275,7 +287,7 @@ function LocationSquare({
   return (
     <AdvancedMarker
       position={{ lat: location.lat, lng: location.lng }}
-      title={`${location.name} (${kindLabel(location)})`}
+      title={`${location.name} (${kindLabel(location)}${powered ? ", chosen for solar" : ""})`}
       onClick={onClick}
       anchorLeft="-50%"
       anchorTop="-50%"
@@ -283,6 +295,12 @@ function LocationSquare({
       className="group"
     >
       <div className="relative font-display">
+        {powered && (
+          <span
+            aria-hidden
+            className="flicker-in pointer-events-none absolute -inset-[5px] rounded-sm border-2 border-aqua shadow-[0_0_12px_2px_var(--color-aqua)]"
+          />
+        )}
         <span
           className={cn(
             "flex items-center justify-center rounded-sm border-2 border-ink font-semibold leading-none text-ink shadow-[0_0_0_1.5px_var(--color-ink-foreground)] transition-[width,height,font-size,transform] duration-150",
@@ -311,6 +329,7 @@ function LocationSquare({
           <span className="pointer-events-none absolute bottom-full left-1/2 mb-2 hidden max-w-48 -translate-x-1/2 truncate whitespace-nowrap rounded-sm border border-ink-foreground/25 bg-ink px-2 py-1 text-xs text-ink-foreground group-hover:block">
             {location.name}
             {state === "linked" && <span className="ml-1.5 opacity-60">· supplied</span>}
+            {powered && <span className="ml-1.5 text-aqua">· solar</span>}
           </span>
         )}
       </div>

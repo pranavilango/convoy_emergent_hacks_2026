@@ -1,14 +1,22 @@
 "use client";
 
-import type { KeyboardEvent } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 
-import type { Location } from "@/lib/demo/types";
-import type { SolarAllocation } from "@/lib/solar-allocation/analyze";
+import { distanceKm, formatDistance } from "@/lib/demo/geometry";
+import { summarizeHours } from "@/lib/demo/hours";
+import { kindLabel } from "@/lib/demo/kinds";
+import { peopleLabel } from "@/lib/demo/population";
+import type { Connection, Location } from "@/lib/demo/types";
+import type { BudgetStep, SolarAllocation } from "@/lib/solar-allocation/analyze";
+
 import { AnalysisText } from "./analysis-text";
 import { Button } from "./controls";
+import { KindMark } from "./location-kinds";
 
 export type AllocationAnalysisResult = {
   allocation: SolarAllocation;
+  /** Best sites for 1, 2, … units (may be empty). */
+  steps: BudgetStep[];
   analysis: string;
 };
 
@@ -16,12 +24,14 @@ export function AllocationAnalysisDialog({
   status,
   result,
   locations,
+  connections,
   error,
   onClose,
 }: {
   status: "loading" | "ready" | "error";
   result: AllocationAnalysisResult | null;
   locations: Location[];
+  connections: Connection[];
   error: string | null;
   onClose: () => void;
 }) {
@@ -49,7 +59,7 @@ export function AllocationAnalysisDialog({
         <div className="flex items-start justify-between gap-6 border-b border-foreground/30 pb-5">
           <div>
             <p className="font-mono text-[11px] uppercase tracking-wider opacity-70">
-              _Rust optimizer + Gemini explanation
+              _Chosen by Convoy&apos;s optimizer · explained by Gemini
             </p>
             <h2
               id="allocation-dialog-title"
@@ -95,69 +105,154 @@ export function AllocationAnalysisDialog({
         )}
 
         {status === "ready" && result && (
-          <div className="space-y-7 py-6">
-            <section aria-labelledby="allocation-impact-title">
-              <h3
-                id="allocation-impact-title"
-                className="font-mono text-[11px] uppercase tracking-wider opacity-70"
-              >
-                _Weighted delivery-time reduction
-              </h3>
-              <p className="mt-3 font-mono text-3xl tracking-tight">
-                {(
-                  result.allocation.baseline_weighted_hours -
-                  result.allocation.optimized_weighted_hours
-                ).toFixed(2)}{" "}
-                h
-              </p>
-              <p className="mt-2 text-sm leading-relaxed opacity-75">
-                {result.allocation.baseline_weighted_hours.toFixed(2)} h before upgrades →{" "}
-                {result.allocation.optimized_weighted_hours.toFixed(2)} h after upgrades
-              </p>
-            </section>
-
-            <section aria-labelledby="allocation-recommendations-title">
-              <h3
-                id="allocation-recommendations-title"
-                className="font-mono text-[11px] uppercase tracking-wider opacity-70"
-              >
-                _Selected 24/7 sites
-              </h3>
-              <p className="mt-2 text-sm leading-relaxed">
-                Convoy selected {result.allocation.selected.length} of {result.allocation.n}{" "}
-                requested solar units.
-              </p>
-              <ol className="mt-4 divide-y divide-foreground/20 border-y border-foreground/20">
-                {result.allocation.selected.map((id) => {
-                  const location = locations.find((item) => item.id === id);
-                  return (
-                    <li key={id} className="py-4">
-                      <div className="flex items-baseline gap-3">
-                        <span className="font-medium">{location?.name ?? id}</span>
-                        <span className="ml-auto font-mono text-[10px] uppercase tracking-wider opacity-60">
-                          {location?.kind ?? "site"} · 24/7
-                        </span>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ol>
-            </section>
-
-            <section aria-labelledby="allocation-explanation-title">
-              <h3
-                id="allocation-explanation-title"
-                className="font-mono text-[11px] uppercase tracking-wider opacity-70"
-              >
-                _Why these sites
-              </h3>
-              <div className="mt-3">
-                <AnalysisText text={result.analysis} />
-              </div>
-            </section>
-          </div>
+          <AnalysisResult result={result} locations={locations} connections={connections} />
         )}
       </section>
+    </div>
+  );
+}
+
+const hours = (h: number) => `${h.toFixed(1)} h`;
+
+function Heading({ id, children }: { id: string; children: ReactNode }) {
+  return (
+    <h3 id={id} className="font-mono text-[11px] uppercase tracking-wider text-white/60">
+      {children}
+    </h3>
+  );
+}
+
+/** The optimizer's answer: the effect, the chosen sites, what each unit buys, and why. */
+function AnalysisResult({
+  result,
+  locations,
+  connections,
+}: {
+  result: AllocationAnalysisResult;
+  locations: Location[];
+  connections: Connection[];
+}) {
+  const { allocation, steps, analysis } = result;
+  const byId = new Map(locations.map((l) => [l.id, l]));
+  const saved = allocation.baseline_weighted_hours - allocation.optimized_weighted_hours;
+  const share =
+    allocation.baseline_weighted_hours > 0 ? saved / allocation.baseline_weighted_hours : 0;
+  const maxSaved = Math.max(
+    saved,
+    ...steps.map((s) => allocation.baseline_weighted_hours - s.weighted_hours),
+  );
+  const coversEverySite =
+    allocation.selected.length < allocation.n &&
+    allocation.selected.length === locations.filter((l) => l.kind !== "port").length;
+
+  return (
+    <div className="space-y-8 py-6">
+      <section aria-labelledby="allocation-impact-title" className="space-y-2">
+        <Heading id="allocation-impact-title">_Average wait for supplies</Heading>
+        <p className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+          <span className="text-5xl tracking-[-0.04em] text-aqua">−{hours(saved)}</span>
+          <span className="font-mono text-sm text-white/70">
+            {hours(allocation.baseline_weighted_hours)} →{" "}
+            {hours(allocation.optimized_weighted_hours)}
+            {share > 0 && ` · ${Math.round(share * 100)}% shorter`}
+          </span>
+        </p>
+        <p className="text-sm text-white/60">
+          Weighted by the people each clinic serves. With {allocation.selected.length} solar{" "}
+          {allocation.selected.length === 1 ? "unit" : "units"}, these sites stay open around the
+          clock.
+          {coversEverySite &&
+            ` Your budget covers every warehouse and clinic, so all ${allocation.selected.length} are included.`}
+        </p>
+      </section>
+
+      <section aria-labelledby="allocation-sites-title" className="space-y-3">
+        <Heading id="allocation-sites-title">_Chosen for solar</Heading>
+        <ol className="divide-y divide-white/15 border-y border-white/15">
+          {allocation.selected.map((id) => {
+            const site = byId.get(id);
+            if (!site) return null;
+            const suppliers = connections
+              .filter((c) => c.toId === id)
+              .map((c) => byId.get(c.fromId))
+              .filter((l): l is Location => l !== undefined);
+            return (
+              <li key={id} className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 py-4">
+                <KindMark kind={site.kind} className="mt-1" />
+                <div className="min-w-0 space-y-1">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+                    <span className="text-lg leading-tight tracking-tight">{site.name}</span>
+                    <span className="font-mono text-[10px] uppercase tracking-wider text-white/60">
+                      {kindLabel(site)}
+                    </span>
+                  </div>
+                  <p className="text-sm text-white/75">
+                    {summarizeHours(site.hours).join(", ")}{" "}
+                    <span className="text-aqua">→ open 24/7</span>
+                  </p>
+                  <p className="font-mono text-[11px] uppercase tracking-wider text-white/50">
+                    {[
+                      site.kind === "clinic" && site.population !== null
+                        ? `Serves ${peopleLabel(site.population)}`
+                        : null,
+                      ...suppliers.map(
+                        (s) => `From ${s.name} · ${formatDistance(distanceKm(s, site))}`,
+                      ),
+                    ]
+                      .filter(Boolean)
+                      .join("  ·  ")}
+                  </p>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      </section>
+
+      {steps.length > 1 && (
+        <section aria-labelledby="allocation-steps-title" className="space-y-3">
+          <Heading id="allocation-steps-title">_What each solar unit buys</Heading>
+          <ol className="space-y-3">
+            {steps.map((step) => {
+              const stepSaved = allocation.baseline_weighted_hours - step.weighted_hours;
+              return (
+                <li key={step.units} className="space-y-1">
+                  <div className="flex items-baseline justify-between gap-3 text-sm">
+                    <span className="min-w-0">
+                      <span className="font-mono text-xs text-aqua">
+                        {step.units} {step.units === 1 ? "unit" : "units"}
+                      </span>{" "}
+                      <span className="text-white/75">
+                        {step.selected.map((id) => byId.get(id)?.name ?? "Site").join(", ")}
+                      </span>
+                    </span>
+                    <span className="shrink-0 font-mono text-xs text-white/70">
+                      {hours(step.weighted_hours)}
+                    </span>
+                  </div>
+                  <div className="h-1.5 rounded-sm bg-white/10" aria-hidden>
+                    <div
+                      className="h-full rounded-sm bg-aqua"
+                      style={{ width: `${maxSaved > 0 ? (stepSaved / maxSaved) * 100 : 0}%` }}
+                    />
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        </section>
+      )}
+
+      <section aria-labelledby="allocation-explanation-title" className="space-y-3">
+        <Heading id="allocation-explanation-title">_Why these sites</Heading>
+        <AnalysisText text={analysis} />
+      </section>
+
+      <p className="border-t border-white/15 pt-4 text-xs leading-relaxed text-white/50">
+        Modelled estimates, not measurements: travel is a straight line at 60 km/h, each site uses
+        its widest daily opening hours, and clinics count by the people they serve. Check them
+        against real delivery records before committing funds.
+      </p>
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { ConvoyMark } from "@/components/convoy-mark";
 import { findConnection, outgoing } from "@/lib/demo/graph";
 import { unitsAffordable } from "@/lib/demo/budget";
+import { analysisIssues } from "@/lib/solar-allocation/readiness";
 import { canSupply, KIND_INFO, LOCATION_KINDS, SUPPLIES } from "@/lib/demo/kinds";
 import { demoActions, useDemoState } from "@/lib/demo/store";
 import type { Location } from "@/lib/demo/types";
@@ -47,10 +48,14 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
   );
   const [analysisResult, setAnalysisResult] = useState<AllocationAnalysisResult | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
-  const hasRequiredLocationKinds = (["port", "warehouse", "clinic"] as const).every((kind) =>
-    locations.some((location) => location.kind === kind),
-  );
   const affordableSolarUnits = unitsAffordable(budget);
+  // What still blocks Analyze, by site name (mirrors the optimizer's rules).
+  const issues = analysisIssues(locations, connections, affordableSolarUnits);
+  // The network the last result was computed for; any edit makes the result out of date.
+  const networkKey = JSON.stringify({ locations, connections, budget });
+  const [analyzedKey, setAnalyzedKey] = useState<string | null>(null);
+  const resultIsCurrent = analysisResult !== null && analyzedKey === networkKey;
+  const poweredIds = resultIsCurrent ? new Set(analysisResult.allocation.selected) : null;
 
   useEffect(() => {
     if (!apiKey) return;
@@ -118,6 +123,7 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
   }
 
   async function analyzeNetwork() {
+    const key = networkKey;
     setAnalysisStatus("loading");
     setAnalysisResult(null);
     setAnalysisError(null);
@@ -166,6 +172,7 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
       }
 
       setAnalysisResult(payload);
+      setAnalyzedKey(key);
       setAnalysisStatus("ready");
     } catch (error) {
       setAnalysisError(
@@ -214,35 +221,57 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
           <SectionLabel index="06">Analysis</SectionLabel>
         </h2>
         <p className="text-sm leading-relaxed opacity-75">
-          Use the available solar units to optimize which warehouses and clinics should operate
-          24/7, then review the selected sites and delivery-time metrics.
+          Convoy&apos;s optimizer picks the warehouses and clinics where your solar units cut the
+          wait for supplies the most, weighted by the people each clinic serves. Gemini explains the
+          choice.
         </p>
         <Button
           onClick={analyzeNetwork}
-          disabled={
-            !hasRequiredLocationKinds ||
-            affordableSolarUnits === null ||
-            affordableSolarUnits < 1 ||
-            !Number.isSafeInteger(affordableSolarUnits) ||
-            analysisStatus === "loading"
-          }
+          disabled={issues.length > 0 || analysisStatus === "loading"}
           aria-busy={analysisStatus === "loading"}
           className="w-full"
         >
           {analysisStatus === "loading" ? "Analyzing…" : "Analyze"}
         </Button>
-        {!hasRequiredLocationKinds && (
-          <p className="text-xs opacity-70">
-            Add at least one port, warehouse, and clinic to enable analysis.
-          </p>
+        {issues.length > 0 && (
+          <div className="space-y-2">
+            <p className="font-mono text-[11px] uppercase tracking-wider text-white/60">
+              Before you analyze
+            </p>
+            <ul aria-label="Before you analyze" className="space-y-1.5 text-sm text-white/80">
+              {issues.slice(0, 5).map((issue) => (
+                <li key={issue} className="flex gap-2">
+                  <span aria-hidden className="text-aqua">
+                    ·
+                  </span>
+                  {issue}
+                </li>
+              ))}
+              {issues.length > 5 && (
+                <li className="text-white/50">…and {issues.length - 5} more.</li>
+              )}
+            </ul>
+          </div>
         )}
-        {affordableSolarUnits === null ? (
-          <p className="text-xs opacity-70">
-            Enter the solar unit cost and total budget to analyze.
-          </p>
-        ) : affordableSolarUnits < 1 ? (
-          <p className="text-xs opacity-70">The budget must cover at least one solar unit.</p>
-        ) : null}
+        {analysisResult && analysisStatus === "idle" && (
+          <div className="flex items-center justify-between gap-3 border-y border-foreground/20 py-3 text-sm">
+            <span className={resultIsCurrent ? "" : "text-white/50"}>
+              {resultIsCurrent
+                ? `Last result: ${analysisResult.allocation.selected.length} sites lit on the map, −${(
+                    analysisResult.allocation.baseline_weighted_hours -
+                    analysisResult.allocation.optimized_weighted_hours
+                  ).toFixed(1)} h`
+                : "Out of date: the network changed since the last analysis."}
+            </span>
+            <Button
+              variant="ghost"
+              className="shrink-0 font-mono text-[11px] uppercase tracking-wider"
+              onClick={() => setAnalysisStatus("ready")}
+            >
+              View result
+            </Button>
+          </div>
+        )}
       </section>
     </div>
   );
@@ -256,6 +285,7 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
           mapId={mapId || FALLBACK_MAP_ID}
           locations={locations}
           connections={connections}
+          poweredIds={poweredIds}
           selection={selection}
           connectingFrom={connectingFrom}
           focus={focus}
@@ -269,7 +299,13 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
           onBackgroundClick={() => (connectingFrom ? stopConnecting() : setSelection(null))}
         />
       )}
-      {!problem && <Legend locations={locations} connectionCount={connections.length} />}
+      {!problem && (
+        <Legend
+          locations={locations}
+          connectionCount={connections.length}
+          poweredCount={poweredIds?.size ?? 0}
+        />
+      )}
       {connectingLocation && (
         <ConnectBanner
           origin={connectingLocation}
@@ -300,6 +336,7 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
           status={analysisStatus}
           result={analysisResult}
           locations={locations}
+          connections={connections}
           error={analysisError}
           onClose={() => {
             if (analysisStatus !== "loading") setAnalysisStatus("idle");
@@ -326,6 +363,24 @@ function isAllocationAnalysisResult(value: unknown): value is AllocationAnalysis
     !("allocation" in value) ||
     typeof value.allocation !== "object" ||
     value.allocation === null
+  ) {
+    return false;
+  }
+
+  if (
+    !("steps" in value) ||
+    !Array.isArray(value.steps) ||
+    !value.steps.every(
+      (step: unknown) =>
+        typeof step === "object" &&
+        step !== null &&
+        "units" in step &&
+        Number.isSafeInteger(step.units) &&
+        "selected" in step &&
+        Array.isArray(step.selected) &&
+        "weighted_hours" in step &&
+        typeof step.weighted_hours === "number",
+    )
   ) {
     return false;
   }
@@ -426,9 +481,12 @@ function DemoHeader({ count, connectionCount }: { count: number; connectionCount
 function Legend({
   locations,
   connectionCount,
+  poweredCount,
 }: {
   locations: Location[];
   connectionCount: number;
+  /** Sites lit by the latest analysis; the row only shows when there are some. */
+  poweredCount: number;
 }) {
   return (
     // Bottom-left, above Google's logo, so it never collides with the connect banner up top.
@@ -453,6 +511,16 @@ function Legend({
             {String(connectionCount).padStart(2, "0")}
           </span>
         </li>
+        {poweredCount > 0 && (
+          <li className="flex items-center gap-2">
+            <span
+              aria-hidden
+              className="inline-block h-3.5 w-3.5 rounded-sm border-2 border-aqua shadow-[0_0_6px_1px_var(--color-aqua)]"
+            />
+            <span>Chosen for solar</span>
+            <span className="ml-auto pl-3 opacity-60">{String(poweredCount).padStart(2, "0")}</span>
+          </li>
+        )}
       </ul>
     </div>
   );

@@ -25,18 +25,20 @@ Requires Node.js 20.9+.
 
 ```sh
 npm install
-npm run dev        # http://localhost:3000
+npm run dev        # http://localhost:3000, plus the Rust engine on :8080
 ```
 
-| Script              | What it does                    |
-| ------------------- | ------------------------------- |
-| `npm run dev`       | Dev server with hot reload      |
-| `npm run build`     | Production build                |
-| `npm start`         | Serve the production build      |
-| `npm run lint`      | ESLint (Next + Prettier rules)  |
-| `npm run typecheck` | TypeScript, no emit             |
-| `npm test`          | Run tests once                  |
-| `npm run format`    | Format everything with Prettier |
+| Script               | What it does                    |
+| -------------------- | ------------------------------- |
+| `npm run dev`        | Site (hot reload) + Rust engine |
+| `npm run dev:web`    | Site only                       |
+| `npm run dev:engine` | Rust engine only                |
+| `npm run build`      | Production build                |
+| `npm start`          | Serve the production build      |
+| `npm run lint`       | ESLint (Next + Prettier rules)  |
+| `npm run typecheck`  | TypeScript, no emit             |
+| `npm test`           | Run tests once                  |
+| `npm run format`     | Format everything with Prettier |
 
 ## Landing page (`/`)
 
@@ -100,13 +102,18 @@ discarded on load.
 ### Rust allocation service
 
 The Next.js route uploads a JSON graph to the Rust service using the multipart `/api/analyze`
-contract documented in [API.md](API.md). Start it in a second terminal:
+contract documented in [API.md](API.md). `npm run dev` starts it for you (`cargo run --release`,
+or reuses one already answering on `MEDROUTE_API_URL`); it needs Rust from
+[rustup.rs](https://rustup.rs). Set `MEDROUTE_API_URL` in `.env.local` when the service is not at
+`http://127.0.0.1:8080`.
 
-```sh
-cargo run --release
-```
-
-Set `MEDROUTE_API_URL` in `.env.local` when the service is not at `http://127.0.0.1:8080`.
+Before Analyze unlocks, the panel lists anything the engine would reject, by site name: unlinked
+sites, separate networks, sites closed all week or with overnight shifts, clinics without a
+population, or a budget below one unit (`src/lib/solar-allocation/readiness.ts`). A result shows
+the drop in population-weighted wait, each chosen site (hours → 24/7, people served, supply
+link), what each extra solar unit buys (the route also asks the engine for the best 1, 2, … units,
+up to 10), and Gemini's plain-language explanation built from those facts. Chosen sites glow on
+the map until the network changes.
 The backend accepts one daily opening window per site. Convoy represents each weekly schedule with
 the envelope from its earliest opening to latest closing; Gemini explains this modeling limit.
 

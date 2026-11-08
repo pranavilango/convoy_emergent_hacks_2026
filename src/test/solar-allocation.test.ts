@@ -88,30 +88,39 @@ describe("solar allocation analysis", () => {
     const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toContain("/models/gemini-test-model:generateContent");
     expect(new Headers(options.headers).get("x-goog-api-key")).toBe("test-api-key");
-    expect(String(options.body)).toContain("baseline_weighted_hours");
-    expect(String(options.body)).toContain("21.64");
-    expect(String(options.body).toLowerCase()).toContain("do not solve the optimization again");
-    expect(String(options.body)).toContain("Do not mention the solver");
-    expect(String(options.body)).toContain("Clinic A");
-    expect(String(options.body)).toContain("12400");
+    const prompt = String(options.body);
+    // Plain-language facts, by name: hours, people served, supply links with distances.
+    expect(prompt).toContain("Clinic A");
+    expect(prompt).toContain("12400");
+    expect(prompt).toContain("Mon–Fri 09:00–17:00");
+    expect(prompt).toContain("21.6"); // weighted hours before, rounded
+    expect(prompt).toMatch(/Central Store[^}]*km/);
+    // Guardrails: explain, don't re-decide; no ids or method talk.
+    expect(prompt).toContain("Do not suggest or compare other allocations");
+    expect(prompt).toContain("Never mention ids, algorithms, solvers");
+    expect(prompt).not.toContain("warehouse-1");
   });
 
   it("returns the Rust allocation with Gemini's explanation", async () => {
     process.env["GEMINI_API_KEY"] = "test-api-key";
     process.env["MEDROUTE_API_URL"] = "http://medroute.test/";
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify(allocation), { status: 200 }))
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            candidates: [
-              { content: { parts: [{ text: "The selected sites reduce weighted waits." }] } },
-            ],
-          }),
-          { status: 200 },
-        ),
-      );
+    const oneUnit = { ...allocation, selected: ["clinic-1"], n: 1, optimized_weighted_hours: 15 };
+    const fetchMock = vi.fn((url: string, _init?: RequestInit) =>
+      Promise.resolve(
+        url.includes("generativelanguage")
+          ? new Response(
+              JSON.stringify({
+                candidates: [
+                  { content: { parts: [{ text: "The selected sites reduce weighted waits." }] } },
+                ],
+              }),
+              { status: 200 },
+            )
+          : new Response(JSON.stringify(url.includes("n=1&") ? oneUnit : allocation), {
+              status: 200,
+            }),
+      ),
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     const response = await POST(
@@ -125,9 +134,15 @@ describe("solar allocation analysis", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       allocation,
+      // What each unit buys: the best single site, then the full allocation.
+      steps: [
+        { units: 1, selected: ["clinic-1"], weighted_hours: 15 },
+        { units: 2, selected: ["warehouse-1", "clinic-1"], weighted_hours: 11.54 },
+      ],
       analysis: "The selected sites reduce weighted waits.",
     });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // n=2 (the answer), n=1 (the curve), then Gemini.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("http://medroute.test/api/analyze?n=2&strategy=auto");
     expect(options.method).toBe("POST");
@@ -159,9 +174,14 @@ describe("solar allocation analysis", () => {
   it("reports missing Gemini configuration instead of returning an unexplained allocation", async () => {
     delete process.env["GEMINI_API_KEY"];
     process.env["MEDROUTE_API_URL"] = "http://medroute.test/";
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(new Response(JSON.stringify(allocation), { status: 200 }));
+    // The optimizer answers for whatever unit count it's asked.
+    const fetchMock = vi.fn((url: string) => {
+      const n = Number(new URL(url).searchParams.get("n"));
+      const selected = allocation.selected.slice(0, n);
+      return Promise.resolve(
+        new Response(JSON.stringify({ ...allocation, n, selected }), { status: 200 }),
+      );
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     const response = await POST(
@@ -176,7 +196,33 @@ describe("solar allocation analysis", () => {
     await expect(response.json()).resolves.toEqual({
       error: "Gemini explanation is not configured on the server.",
     });
-    expect(fetchMock).toHaveBeenCalledOnce();
+    // The optimizer ran; Gemini was never called.
+    expect(fetchMock.mock.calls.every(([url]) => !String(url).includes("generativelanguage"))).toBe(
+      true,
+    );
+  });
+
+  it("names sites instead of ids in the optimizer's errors", async () => {
+    process.env["MEDROUTE_API_URL"] = "http://medroute.test/";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: "destination `clinic-1` has no incoming edge" }), {
+          status: 422,
+        }),
+      ),
+    );
+    const response = await POST(
+      new Request("http://localhost/api/solar-allocation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ network, n: 2 }),
+      }),
+    );
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toEqual({
+      error: "destination `Clinic A` has no incoming edge",
+    });
   });
 
   it("rejects requests without a valid graph or solar-unit count", async () => {
