@@ -114,6 +114,45 @@ describe("DemoApp without an API key", () => {
   });
 });
 
+describe("network editor order", () => {
+  it("starts with the budget, the primary constraint, then locations, connections, analysis", () => {
+    render(<DemoApp />);
+    const headings = within(screen.getByLabelText("Network editor"))
+      .getAllByRole("heading", { level: 2 })
+      .map((h) => h.textContent);
+    expect(headings).toEqual([
+      "_01 BudgetUSD",
+      "_02 Add a location",
+      expect.stringMatching(/^_03 Location types/),
+      expect.stringMatching(/^_04 Locations/),
+      expect.stringMatching(/^_05 Connections/),
+      "_06 Analysis",
+    ]);
+  });
+});
+
+describe("Ghana sample network", () => {
+  it("loads from the floating bottom-right button, asking before it replaces a network", () => {
+    render(<DemoApp />);
+    const button = screen.getByRole("button", { name: "Load Ghana sample network" });
+    expect(button).toHaveClass("fixed", "right-4", "bottom-4");
+    expect(screen.queryByText(/Ready for the judges/)).toBeNull();
+
+    fireEvent.click(button);
+    expect(screen.getAllByText("Tamale Clinic").length).toBeGreaterThan(0);
+
+    act(() => demoActions.removeLocation("sample-tamale-clinic"));
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    fireEvent.click(button);
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(screen.queryAllByText("Tamale Clinic")).toHaveLength(0);
+    confirm.mockReturnValue(true);
+    fireEvent.click(button);
+    expect(screen.getAllByText("Tamale Clinic").length).toBeGreaterThan(0);
+    confirm.mockRestore();
+  });
+});
+
 describe("solar allocation analysis", () => {
   it("lists what blocks Analyze, then shows the optimizer's result and keeps it until edits", async () => {
     render(<DemoApp />);

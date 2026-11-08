@@ -64,7 +64,7 @@ export function ConnectionsManager({
   return (
     <section aria-labelledby="connections-heading" className="space-y-4">
       <h2 id="connections-heading">
-        <SectionLabel index="04" aside={String(connections.length).padStart(2, "0")}>
+        <SectionLabel index="05" aside={String(connections.length).padStart(2, "0")}>
           Connections
         </SectionLabel>
       </h2>

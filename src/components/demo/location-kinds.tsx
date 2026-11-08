@@ -48,7 +48,7 @@ export function LocationKinds({ locations }: { locations: Location[] }) {
   return (
     <section aria-labelledby="kinds-heading" className="space-y-4">
       <h2 id="kinds-heading">
-        <SectionLabel index="02" aside="Port → Warehouse → Clinic">
+        <SectionLabel index="03" aside="Port → Warehouse → Clinic">
           Location types
         </SectionLabel>
       </h2>

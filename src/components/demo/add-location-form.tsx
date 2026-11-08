@@ -86,7 +86,7 @@ export function AddLocationForm({
   return (
     <section aria-labelledby="add-heading" className="space-y-5">
       <h2 id="add-heading">
-        <SectionLabel index="01">Add a location</SectionLabel>
+        <SectionLabel index="02">Add a location</SectionLabel>
       </h2>
 
       {!searchAvailable ? (

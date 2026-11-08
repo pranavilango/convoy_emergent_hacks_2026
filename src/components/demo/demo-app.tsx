@@ -197,36 +197,27 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
     else demoActions.connectLocations(origin.id, targetId);
   }
 
+  /** Replace the network with the Ghana sample, asking first if there's one on the map. */
+  function loadSample() {
+    if (
+      locations.length > 0 &&
+      !window.confirm("Replace your current network and budget with the Ghana sample network?")
+    ) {
+      return;
+    }
+    demoActions.replaceState(createSampleNetwork());
+    setSelection(null);
+    setConnectingFrom(null);
+    setAnalysisStatus("idle");
+    setAnalysisResult(null);
+    setAnalyzedKey(null);
+  }
+
   const panel = (
-    <div className="space-y-12 px-6 py-8 md:px-8">
-      <section className="space-y-3 border-b border-foreground/20 pb-8">
-        <p className="font-mono text-[11px] uppercase tracking-wider text-white/60">
-          _Ready for the judges
-        </p>
-        <p className="text-sm leading-relaxed text-white/80">
-          Explore a sample medical supply corridor in Ghana, then see how the available solar units
-          change the network-wide estimate.
-        </p>
-        <Button
-          variant="outline"
-          className="w-full"
-          onClick={() => {
-            demoActions.replaceState(createSampleNetwork());
-            setSelection(null);
-            setConnectingFrom(null);
-            setAnalysisStatus("idle");
-            setAnalysisResult(null);
-            setAnalyzedKey(null);
-          }}
-        >
-          Load Ghana sample network
-        </Button>
-        {locations.length > 0 && (
-          <p className="text-xs text-white/50">
-            Loading this sample replaces the current network and budget.
-          </p>
-        )}
-      </section>
+    // Extra room at the bottom on phones, so the floating sample button never hides the end.
+    <div className="space-y-12 px-6 pt-8 pb-24 md:px-8 md:pb-8">
+      {/* The budget comes first: it caps how many sites can get solar. */}
+      <BudgetSection budget={budget} />
       <AddLocationForm
         searchAvailable={problem === null}
         onAdded={(id) => {
@@ -248,7 +239,6 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
         selectedConnectionId={selection?.kind === "connection" ? selection.id : null}
         onSelectConnection={selectConnectionFromPanel}
       />
-      <BudgetSection budget={budget} />
       <section aria-labelledby="analysis-heading" className="space-y-4">
         <h2 id="analysis-heading">
           <SectionLabel index="06">Analysis</SectionLabel>
@@ -365,6 +355,7 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
           {panel}
         </aside>
       </div>
+      <SampleButton onClick={loadSample} />
       {analysisStatus !== "idle" && (
         <AllocationAnalysisDialog
           status={analysisStatus}
@@ -434,6 +425,20 @@ function isAllocationAnalysisResult(value: unknown): value is AllocationAnalysis
     "optimized_weighted_hours" in allocation &&
     typeof allocation.optimized_weighted_hours === "number" &&
     Number.isFinite(allocation.optimized_weighted_hours)
+  );
+}
+
+/** Floats at the bottom right of the page: left of the map's zoom buttons and above Google's
+ *  attribution on desktop, in the corner on phones. */
+function SampleButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`fixed right-4 bottom-4 z-20 rounded-sm border border-aqua bg-ink/90 px-4 py-2.5 font-mono text-[11px] uppercase tracking-wider text-aqua shadow-lg backdrop-blur-sm transition-colors hover:bg-aqua hover:text-night md:right-16 md:bottom-9 ${focusRing}`}
+    >
+      Load Ghana sample network
+    </button>
   );
 }
 

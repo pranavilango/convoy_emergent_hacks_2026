@@ -58,7 +58,7 @@ export function LocationList({
   return (
     <section aria-labelledby="locations-heading" className="space-y-4">
       <h2 id="locations-heading">
-        <SectionLabel index="03" aside={String(locations.length).padStart(2, "0")}>
+        <SectionLabel index="04" aside={String(locations.length).padStart(2, "0")}>
           Locations
         </SectionLabel>
       </h2>

@@ -24,7 +24,7 @@ export function BudgetSection({ budget }: { budget: Budget }) {
   return (
     <section aria-labelledby="budget-heading" className="space-y-4">
       <h2 id="budget-heading">
-        <SectionLabel index="05" aside="USD">
+        <SectionLabel index="01" aside="USD">
           Budget
         </SectionLabel>
       </h2>
@@ -122,11 +122,13 @@ function AmountField({
   return (
     <div>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <div className="flex items-baseline gap-1.5">
+      {/* The underline runs under the "$" too, full width like every other field's. */}
+      <div className="flex items-baseline gap-1.5 border-b border-foreground focus-within:shadow-[0_1px_0_0_var(--color-foreground)]">
         <span aria-hidden className="text-base">
           $
         </span>
         <TextInput
+          className="border-b-0 focus-visible:shadow-none"
           id={id}
           value={text}
           inputMode="decimal"
