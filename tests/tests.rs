@@ -84,12 +84,18 @@ fn zero_transit_chain() -> Graph {
 const ZERO_CHAIN_JSON: &str = r#"{
   "nodes": [
     {"id": "S", "kind": "source", "latitude": 0, "longitude": 0},
-    {"id": "P", "kind": "pass_through", "latitude": 0, "longitude": 0, "open_from": 8, "open_until": 10},
+    {"id": "P", "kind": "pass_through", "latitude": 0, "longitude": 0, "open_from": 8, "open_until": 9},
     {"id": "D", "kind": "destination", "latitude": 0, "longitude": 0, "open_from": 12, "open_until": 14, "priority": 1}
   ],
-  "edges": [{"from": "S", "to": "P"}, {"from": "P", "to": "D"}],
-  "departure_hours": [0]
+  "edges": [{"from": "S", "to": "P"}, {"from": "P", "to": "D"}]
 }"#;
+
+// Hand-computed for ZERO_CHAIN_JSON, zero transit, averaged over departures 0..=23
+// (P open [8,10), D open [12,15)):
+//   no upgrade : 348/24 = 14.5
+//   upgrade D  : 253/24
+//   upgrade P  : 231/24 = 9.625   <- best single node
+//   both       : 0
 
 /// Tiny deterministic generator so the randomised tests are reproducible.
 struct Lcg(u64);
@@ -302,11 +308,20 @@ fn window_always_open_constant_is_zero_to_twenty_three() {
 }
 
 #[test]
-fn window_wait_is_zero_inside_closed_interval() {
+fn window_wait_is_zero_inside_half_open_interval() {
+    // [8, 17] means [08:00, 18:00).
     let w = win(8, 17);
-    for t in [8.0, 8.5, 12.0, 17.0] {
+    for t in [8.0, 8.5, 12.0, 17.0, 17.5, 17.99] {
         assert_close(w.wait_hours(t), 0.0);
     }
+}
+
+#[test]
+fn window_end_hour_is_inclusive_but_next_hour_is_closed() {
+    let w = win(8, 17);
+    assert_close(w.wait_hours(18.0), 14.0); // closed again at 18:00, reopens 08:00
+    assert_close(win(8, 8 + 1).wait_hours(10.0), 22.0);
+    assert_close(win(8, 9).wait_hours(9.99), 0.0);
 }
 
 #[test]
@@ -317,7 +332,7 @@ fn window_wait_before_opening_same_day() {
 
 #[test]
 fn window_wait_after_closing_until_next_day() {
-    assert_close(win(8, 17).wait_hours(17.5), 14.5);
+    assert_close(win(8, 17).wait_hours(18.5), 13.5);
     assert_close(win(8, 17).wait_hours(23.0), 9.0);
 }
 
@@ -335,16 +350,21 @@ fn window_wait_handles_negative_clock() {
 
 #[test]
 fn window_wait_tolerates_float_noise_on_boundaries() {
+    // Just below the opening time counts as open; just below the closing time counts as closed.
     assert_close(win(8, 17).wait_hours(8.0 - 1e-12), 0.0);
-    assert_close(win(8, 17).wait_hours(17.0 + 1e-12), 0.0);
+    assert_close(win(8, 17).wait_hours(18.0 - 1e-12), 14.0);
 }
 
 #[test]
-fn always_open_window_is_literally_zero_to_twenty_three() {
+fn zero_to_twenty_three_is_open_all_day() {
     let w = TimeWindow::ALWAYS_OPEN;
-    assert_close(w.wait_hours(0.0), 0.0);
-    assert_close(w.wait_hours(23.0), 0.0);
-    assert_close(w.wait_hours(23.5), 0.5);
+    assert!(w.is_always_open());
+    assert!(win(0, 23).is_always_open());
+    assert!(!win(0, 22).is_always_open());
+    assert!(!win(1, 23).is_always_open());
+    for t in [0.0, 12.0, 23.0, 23.5, 23.999_999_999_9, 24.0, 47.9, -0.5] {
+        assert_close(w.wait_hours(t), 0.0);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -720,6 +740,8 @@ fn destination_ttd_hand_computed_zero_transit() {
     assert_close(destination_time_to_delivery(route, 11.0, &none), 25.0);
     // h=13: P closed -> t=32 -> D 08:00 wait 4 -> 36-13 = 23
     assert_close(destination_time_to_delivery(route, 13.0, &none), 23.0);
+    // h=10.5: P is still open (window is [08:00, 11:00)), wait 1.5 at D => 1.5
+    assert_close(destination_time_to_delivery(route, 10.5, &none), 1.5);
 }
 
 #[test]
@@ -761,7 +783,7 @@ fn destination_ttd_includes_transit_time() {
 
 #[test]
 fn destination_ttd_transit_can_cause_missing_a_window() {
-    // Source->P takes ~1.85 h; P closes at 10:00. Leaving at 9:00 arrives ~10:51 => waits until 08:00 next day.
+    // Source->P takes ~1.85 h; P is open [08:00, 11:00). Leaving at 9:30 arrives ~11:21 => waits until 08:00 next day.
     let g = Graph::new(
         vec![
             src("S", 0.0, 0.0),
@@ -772,9 +794,12 @@ fn destination_ttd_transit_can_cause_missing_a_window() {
     )
     .unwrap();
     let hop = coord(0.0, 0.0).travel_hours(coord(0.0, 1.0));
+    let ttd = destination_time_to_delivery(&g.routes()[0], 9.5, &UpgradeSet::new(3));
+    assert_close(ttd, (24.0 + 8.0) - 9.5);
+    assert!(9.5 + hop > 11.0);
+    // Leaving at 9:00 arrives ~10:51, still inside the window.
     let ttd = destination_time_to_delivery(&g.routes()[0], 9.0, &UpgradeSet::new(3));
-    assert_close(ttd, (24.0 + 8.0) - 9.0);
-    assert!(9.0 + hop > 10.0);
+    assert_close(ttd, hop);
 }
 
 #[test]
@@ -1017,12 +1042,20 @@ fn search_rejects_bad_n() {
     let deps = hours(&[0.0]);
     assert_eq!(exact_search(&g, &deps, 0).unwrap_err(), SolveError::ZeroSelection);
     assert_eq!(greedy_search(&g, &deps, 0).unwrap_err(), SolveError::ZeroSelection);
-    let too_many = SolveError::TooManyNodes {
-        requested: 3,
-        available: 2,
-    };
-    assert_eq!(exact_search(&g, &deps, 3).unwrap_err(), too_many);
-    assert_eq!(greedy_search(&g, &deps, 3).unwrap_err(), too_many);
+}
+
+#[test]
+fn search_with_n_above_candidate_count_selects_every_candidate() {
+    let g = zero_transit_chain();
+    let deps = hours(&[0.0]);
+    for n in [2usize, 3, 100] {
+        let exact = exact_search(&g, &deps, n).unwrap();
+        let greedy = greedy_search(&g, &deps, n).unwrap();
+        assert_eq!(exact.nodes, vec![ix(1), ix(2)]);
+        assert_eq!(greedy.nodes, vec![ix(1), ix(2)]);
+        assert_close(exact.objective, 0.0);
+        assert_close(greedy.objective, 0.0);
+    }
 }
 
 #[test]
@@ -1113,13 +1146,13 @@ fn solve_validates_n() {
         solve(&g, &hours(&[0.0]), 0, Strategy::Auto, &cfg).unwrap_err(),
         SolveError::ZeroSelection
     );
-    assert_eq!(
-        solve(&g, &hours(&[0.0]), 9, Strategy::Auto, &cfg).unwrap_err(),
-        SolveError::TooManyNodes {
-            requested: 9,
-            available: 2
-        }
-    );
+    // n larger than the number of upgradable nodes selects all of them, whatever the strategy.
+    for strategy in [Strategy::Auto, Strategy::Exact, Strategy::Greedy] {
+        let sol = solve(&g, &hours(&[0.0]), 9, strategy, &cfg).unwrap();
+        assert_eq!(sol.selected, vec![ix(1), ix(2)]);
+        assert_close(sol.optimized_objective, 0.0);
+        assert_close(sol.baseline_objective, 12.0);
+    }
 }
 
 #[test]
@@ -1151,16 +1184,23 @@ fn strategy_and_solver_serde_names() {
 fn parse_valid_file() {
     let input = parse_graph_file(ZERO_CHAIN_JSON.as_bytes()).unwrap();
     assert_eq!(input.graph.node_count(), 3);
-    assert_eq!(input.departures.as_slice(), &[0.0]);
     assert_eq!(input.graph.index_of("D"), Some(ix(2)));
-    assert_eq!(input.graph.node(ix(1)).unwrap().window(), Some(win(8, 10)));
+    assert_eq!(input.graph.node(ix(1)).unwrap().window(), Some(win(8, 9)));
 }
 
 #[test]
-fn parse_defaults_departures_to_every_hour() {
-    let json = ZERO_CHAIN_JSON.replace(",\n  \"departure_hours\": [0]", "");
-    let input = parse_graph_file(json.as_bytes()).unwrap();
+fn parse_always_uses_every_whole_hour_as_departure_times() {
+    let input = parse_graph_file(ZERO_CHAIN_JSON.as_bytes()).unwrap();
     assert_eq!(input.departures, DepartureTimes::every_hour());
+}
+
+#[test]
+fn parse_rejects_departure_hours_in_the_file() {
+    let with_hours = ZERO_CHAIN_JSON.replace("\"edges\"", "\"departure_hours\": [0], \"edges\"");
+    assert!(matches!(
+        parse_graph_file(with_hours.as_bytes()),
+        Err(InputError::Json(m)) if m.contains("departure_hours")
+    ));
 }
 
 #[test]
@@ -1199,15 +1239,10 @@ fn parse_surfaces_model_errors() {
         parse_graph_file(lat.as_bytes()).unwrap_err(),
         InputError::Model(ModelError::InvalidLatitude(95.0))
     );
-    let window = ZERO_CHAIN_JSON.replace("\"open_until\": 10", "\"open_until\": 24");
+    let window = ZERO_CHAIN_JSON.replace("\"open_until\": 9", "\"open_until\": 24");
     assert_eq!(
         parse_graph_file(window.as_bytes()).unwrap_err(),
         InputError::Model(ModelError::InvalidWindow { start: 8, end: 24 })
-    );
-    let dep = ZERO_CHAIN_JSON.replace("[0]", "[24]");
-    assert_eq!(
-        parse_graph_file(dep.as_bytes()).unwrap_err(),
-        InputError::Model(ModelError::InvalidDepartureHour(24.0))
     );
     let prio = ZERO_CHAIN_JSON.replace("\"priority\": 1", "\"priority\": -1");
     assert_eq!(
@@ -1278,7 +1313,6 @@ fn graph_file_into_input_matches_parse() {
             to: "P".into()
         }
     );
-    assert_eq!(file.departure_hours, Some(vec![0.0]));
     let input = file.into_input().unwrap();
     assert_eq!(input.graph.edges().len(), 2);
 }
@@ -1303,10 +1337,19 @@ fn build_response_maps_indices_to_ids() {
 #[test]
 fn analyze_bytes_end_to_end() {
     let r = analyze_bytes(ZERO_CHAIN_JSON.as_bytes(), 1, Strategy::Auto, &SolverConfig::default()).unwrap();
-    assert_eq!(r.selected, vec!["D".to_owned()]);
+    assert_eq!(r.selected, vec!["P".to_owned()]);
     assert_eq!(r.solver, SolverUsed::Exact);
-    assert_close(r.baseline_weighted_hours, 12.0);
-    assert_close(r.optimized_weighted_hours, 8.0);
+    assert_close(r.baseline_weighted_hours, 14.5);
+    assert_close(r.optimized_weighted_hours, 9.625);
+}
+
+#[test]
+fn analyze_bytes_with_oversized_n_returns_every_non_source_node() {
+    let cfg = SolverConfig::default();
+    let r = analyze_bytes(ZERO_CHAIN_JSON.as_bytes(), 50, Strategy::Auto, &cfg).unwrap();
+    assert_eq!(r.selected, vec!["P".to_owned(), "D".to_owned()]);
+    assert_eq!(r.n, 50);
+    assert_close(r.optimized_weighted_hours, 0.0);
 }
 
 #[test]
@@ -1326,7 +1369,7 @@ fn analyze_bytes_propagates_errors() {
 fn error_messages_are_human_readable() {
     assert!(ModelError::InvalidWindow { start: 5, end: 3 }.to_string().contains("[5, 3]"));
     assert!(InputError::UnknownNodeId("x".into()).to_string().contains("`x`"));
-    assert!(SolveError::TooManyNodes { requested: 4, available: 2 }.to_string().contains("only 2"));
+    assert!(SolveError::ExactTooLarge { limit: 7 }.to_string().contains("more than 7"));
     assert!(AnalyzeError::from(SolveError::ZeroSelection).to_string().contains("at least 1"));
 }
 
@@ -1519,11 +1562,11 @@ fn http_analyze_success_with_default_strategy() {
     let r = analyze(&s, "?n=1", ZERO_CHAIN_JSON);
     assert_eq!(r.status, 200, "{}", r.body);
     let v = r.json();
-    assert_eq!(v["selected"], serde_json::json!(["D"]));
+    assert_eq!(v["selected"], serde_json::json!(["P"]));
     assert_eq!(v["n"], 1);
     assert_eq!(v["solver"], "exact");
-    assert!((v["baseline_weighted_hours"].as_f64().unwrap() - 12.0).abs() < 1e-9);
-    assert!((v["optimized_weighted_hours"].as_f64().unwrap() - 8.0).abs() < 1e-9);
+    assert!((v["baseline_weighted_hours"].as_f64().unwrap() - 14.5).abs() < 1e-9);
+    assert!((v["optimized_weighted_hours"].as_f64().unwrap() - 9.625).abs() < 1e-9);
 }
 
 #[test]
@@ -1612,10 +1655,29 @@ fn http_analyze_unknown_edge_id_is_422() {
 fn http_analyze_bad_n_values() {
     let s = start_server(&[]);
     assert_eq!(analyze(&s, "?n=0", ZERO_CHAIN_JSON).status, 422);
-    assert_eq!(analyze(&s, "?n=3", ZERO_CHAIN_JSON).status, 422);
     assert_eq!(analyze(&s, "", ZERO_CHAIN_JSON).status, 400);
     assert_eq!(analyze(&s, "?n=-1", ZERO_CHAIN_JSON).status, 400);
     assert_eq!(analyze(&s, "?n=abc", ZERO_CHAIN_JSON).status, 400);
+}
+
+#[test]
+fn http_analyze_n_above_candidate_count_returns_all_non_sources() {
+    let s = start_server(&[]);
+    for strategy in ["auto", "exact", "greedy"] {
+        let r = analyze(&s, &format!("?n=3&strategy={strategy}"), ZERO_CHAIN_JSON);
+        assert_eq!(r.status, 200, "{}", r.body);
+        let v = r.json();
+        assert_eq!(v["selected"], serde_json::json!(["P", "D"]));
+        assert_eq!(v["n"], 3);
+    }
+}
+
+#[test]
+fn http_analyze_rejects_departure_hours_in_file() {
+    let s = start_server(&[]);
+    let bad = ZERO_CHAIN_JSON.replace("\"edges\"", "\"departure_hours\": [0], \"edges\"");
+    let r = analyze(&s, "?n=1", &bad);
+    assert_eq!(r.status, 400);
 }
 
 #[test]

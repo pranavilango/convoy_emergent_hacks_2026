@@ -21,14 +21,16 @@ It is a Rust library (the algorithm) plus a small HTTP server
   straight-line distance at 60 km/h.
 * Per destination: minimum over all sources/pass-throughs. Network:
   `Σ pᵢ·ttdᵢ / Σ pᵢ`.
-* Choose `n` nodes whose window becomes `[0, 23]` to minimise that value.
+* Choose `n` nodes whose window becomes `[0, 23]` (open 24/7) to minimise that
+  value. If `n` is at least the number of pass-throughs and destinations, all of
+  them are returned.
 
 Interpretation choices (the statement is ambiguous in places) are listed in
 [`src/lib.rs`](src/lib.rs) and [`API.md`](API.md): deliveries follow graph
 edges; distance is haversine; "at a given time" is the departure time, averaged
-over `departure_hours` (default every whole hour); `[0, 23]` is taken literally
-(closed, so 23:30 is *not* open); only pass-throughs and destinations are
-upgradable because sources have no window.
+over every whole hour 0–23 (fixed, not configurable from the file); a window
+`[a, b]` means `[a, b+1)`, so `[0, 23]` is 24/7; only pass-throughs and
+destinations are upgradable because sources have no window.
 
 ## Design
 
@@ -103,10 +105,10 @@ An invalid value makes the server exit with a message naming the variable.
 cargo test
 ```
 
-`tests/tests.rs` (113 tests) covers every public function:
+`tests/tests.rs` (119 tests) covers every public function:
 
-* primitives (validation, haversine distances, window wait-time table,
-  boundary and wrap-around cases);
+* primitives (validation, haversine distances, half-open window wait-time
+  table, boundary and wrap-around cases);
 * graph validation (every error variant) and route pre-computation;
 * evaluation with hand-computed expectations (zero-transit scenarios where the
   answer follows from the windows alone), min-over-sources/pass-throughs,

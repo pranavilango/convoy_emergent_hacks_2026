@@ -30,14 +30,14 @@
 //!   open + transit(pass-through, destination) + wait for the destination to
 //!   open.
 //! * Transit time is great-circle (haversine) distance at 60 km/h.
-//! * Windows are closed intervals on a repeating 24 h clock. `[0, 23]` is taken
-//!   literally: the node is open from 00:00 to 23:00 inclusive (so arriving at
-//!   23:30 means waiting 30 min until midnight).
-//! * "At a given time" is the departure time from the source. Several
-//!   departure times may be supplied; the network objective averages over them
-//!   (default: each whole hour `0..=23`).
+//! * A window `[a, b]` means the half-open interval `[a, b+1)` on a repeating
+//!   24 h clock: open from `a:00` up to (not including) `(b+1):00`. So `[0, 23]`
+//!   is open 24/7.
+//! * "At a given time" is the departure time from the source. The objective is
+//!   averaged over every whole hour `0..=23` ([`DepartureTimes::every_hour`]);
+//!   the uploaded file cannot change this.
 //! * Only pass-throughs and destinations can be chosen (sources have no
-//!   window to replace).
+//!   window to replace). If `n` exceeds their number, all of them are chosen.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
@@ -113,8 +113,6 @@ pub enum InputError {
 pub enum SolveError {
     #[error("n must be at least 1")]
     ZeroSelection,
-    #[error("n = {requested} but only {available} nodes (pass-throughs and destinations) can be upgraded")]
-    TooManyNodes { requested: usize, available: usize },
     #[error("exact search would need more than {limit} combinations; use strategy `greedy` or `auto`, or raise the limit")]
     ExactTooLarge { limit: u64 },
 }
@@ -208,7 +206,8 @@ impl Coordinate {
     }
 }
 
-/// Daily opening interval `[start, end]` in whole hours, `0 <= start < end < 24`.
+/// Daily opening interval written `[start, end]` in whole hours,
+/// `0 <= start < end < 24`, meaning the half-open span `[start, end + 1)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TimeWindow {
     start: u8,
@@ -216,7 +215,7 @@ pub struct TimeWindow {
 }
 
 impl TimeWindow {
-    /// What a node with solar power gets: open from 00:00 to 23:00.
+    /// What a node with solar power gets: `[0, 23]`, i.e. open 24/7.
     pub const ALWAYS_OPEN: TimeWindow = TimeWindow { start: 0, end: 23 };
 
     pub fn new(start: i64, end: i64) -> Result<Self, ModelError> {
@@ -239,13 +238,24 @@ impl TimeWindow {
         self.end
     }
 
+    /// Whether the window covers the whole day (`[0, 23]`).
+    pub fn is_always_open(self) -> bool {
+        self.start == 0 && self.end == 23
+    }
+
     /// Hours to wait, when arriving at absolute time `clock` (hours, may exceed
     /// 24 or be negative), until the window is next open. Zero if already open.
+    ///
+    /// Open means `start <= time_of_day < end + 1`. Clock values within
+    /// `CLOCK_EPSILON` of a boundary are snapped onto it to absorb float noise.
     pub fn wait_hours(self, clock: f64) -> f64 {
+        if self.is_always_open() {
+            return 0.0;
+        }
         let time_of_day = clock.rem_euclid(HOURS_PER_DAY);
         let start = f64::from(self.start);
-        let end = f64::from(self.end);
-        if time_of_day >= start - CLOCK_EPSILON && time_of_day <= end + CLOCK_EPSILON {
+        let closes = f64::from(self.end) + 1.0;
+        if time_of_day >= start - CLOCK_EPSILON && time_of_day < closes - CLOCK_EPSILON {
             0.0
         } else if time_of_day < start {
             start - time_of_day
@@ -887,27 +897,25 @@ pub fn next_combination(combination: &mut [usize], m: usize) -> bool {
     false
 }
 
-fn validate_n(graph: &Graph, n: usize) -> Result<Vec<NodeIndex>, SolveError> {
+/// Rejects `n == 0`; returns the candidates and the effective `n`, which is
+/// clamped to the number of candidates (asking for more selects them all).
+fn validate_n(graph: &Graph, n: usize) -> Result<(Vec<NodeIndex>, usize), SolveError> {
     if n == 0 {
         return Err(SolveError::ZeroSelection);
     }
     let cands = candidates(graph);
-    if n > cands.len() {
-        return Err(SolveError::TooManyNodes {
-            requested: n,
-            available: cands.len(),
-        });
-    }
-    Ok(cands)
+    let effective = n.min(cands.len());
+    Ok((cands, effective))
 }
 
-/// Evaluate every `n`-subset of candidates; ties go to the lexicographically first.
+/// Evaluate every `n`-subset of candidates (`n` is clamped to the candidate
+/// count); ties go to the lexicographically first.
 pub fn exact_search(
     graph: &Graph,
     departures: &DepartureTimes,
     n: usize,
 ) -> Result<Selection, SolveError> {
-    let cands = validate_n(graph, n)?;
+    let (cands, n) = validate_n(graph, n)?;
     let m = cands.len();
     let mut combination: Vec<usize> = (0..n).collect();
     let mut set = UpgradeSet::new(graph.node_count());
@@ -942,7 +950,7 @@ pub fn greedy_search(
     departures: &DepartureTimes,
     n: usize,
 ) -> Result<Selection, SolveError> {
-    let cands = validate_n(graph, n)?;
+    let (cands, n) = validate_n(graph, n)?;
     let mut set = UpgradeSet::new(graph.node_count());
     let mut chosen: Vec<NodeIndex> = Vec::with_capacity(n);
 
@@ -1000,7 +1008,8 @@ pub fn greedy_search(
     })
 }
 
-/// Pick `n` nodes to upgrade, using the requested strategy.
+/// Pick `n` nodes to upgrade, using the requested strategy. If `n` exceeds the
+/// number of upgradable nodes, every one of them is selected.
 pub fn solve(
     graph: &Graph,
     departures: &DepartureTimes,
@@ -1008,8 +1017,8 @@ pub fn solve(
     strategy: Strategy,
     config: &SolverConfig,
 ) -> Result<Solution, SolveError> {
-    let cands = validate_n(graph, n)?;
-    let within_limit = binomial(cands.len() as u64, n as u64)
+    let (cands, effective_n) = validate_n(graph, n)?;
+    let within_limit = binomial(cands.len() as u64, effective_n as u64)
         .is_some_and(|c| c <= config.exact_max_combinations);
 
     let solver = match (strategy, within_limit) {
@@ -1045,8 +1054,6 @@ pub fn solve(
 pub struct GraphFile {
     pub nodes: Vec<NodeRecord>,
     pub edges: Vec<EdgeRecord>,
-    /// Optional departure hours (each in `[0, 24)`); defaults to `0..=23`.
-    pub departure_hours: Option<Vec<f64>>,
 }
 
 /// One node as written in the file.
@@ -1123,7 +1130,7 @@ impl NodeRecord {
     }
 }
 
-/// A validated graph plus the departure times to evaluate it at.
+/// A validated graph plus the departure times to evaluate it at (always every whole hour).
 #[derive(Debug, Clone)]
 pub struct ParsedInput {
     pub graph: Graph,
@@ -1155,13 +1162,9 @@ impl GraphFile {
             edges.push((from, to));
         }
 
-        let departures = match self.departure_hours {
-            Some(hours) => DepartureTimes::new(hours)?,
-            None => DepartureTimes::every_hour(),
-        };
         Ok(ParsedInput {
             graph: Graph::new(nodes, edges)?,
-            departures,
+            departures: DepartureTimes::every_hour(),
         })
     }
 }
@@ -1178,6 +1181,7 @@ pub fn parse_graph_file(bytes: &[u8]) -> Result<ParsedInput, InputError> {
 pub struct AnalyzeResponse {
     /// Ids of the nodes to switch to `[0, 23]`.
     pub selected: Vec<String>,
+    /// The requested `n` (`selected` is shorter if `n` exceeded the upgradable nodes).
     pub n: usize,
     pub solver: SolverUsed,
     pub baseline_weighted_hours: f64,
