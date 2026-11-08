@@ -48,7 +48,7 @@ npm run dev        # http://localhost:3000
 ## Landing page (`/`)
 
 A dark page: black at the top, deepening into the navy of the Earth photo, which fades back out
-to black below it. Text is white, with aquamarine for what matters most ("Convoy", "Every kilowatt
+to black below it. Text is white, with the sky-blue accent (#4cc9f0) for what matters most ("Convoy", "Every kilowatt
 counts.", the solution's key phrase, "Power care.", and links). The hero's headline powers on like
 lights on a weak grid coming back: "Convoy" first, then "Power Planner" and the outputs at uneven
 moments, all within about 1.5s, each glowing in its own colour. Further down, "Every kilowatt
@@ -57,16 +57,18 @@ as it scrolls past: it rotates (±3°) about the planet's real centre, fitted fr
 the photo, so the horizon stays put while the land and lights slide along it (CSS scroll-driven
 animation, `.earth-spin`; browsers without it show the photo still). With reduced motion turned
 on, nothing flickers or turns. The nav links glide smoothly to their sections. The logo mark is
-aquamarine, matching the site's accent color.
+in the accent color.
 
 - Flicker: `power-on` keyframes in `src/app/globals.css`; `lightsOn()` in `src/app/page.tsx` sets
   the hero timings, and `src/components/landing/power-on.tsx` plays it on scroll.
-- Colours: `night`, `night-navy`, and `aqua` tokens in `src/app/globals.css`.
+- Colours: `night`, `night-navy`, and `brand` (the accent) tokens in `src/app/globals.css`. To
+  change the accent, edit `--brand` there, plus `LINE_CORE` in `map-view.tsx` (Google Maps can't
+  read CSS variables) and the fill in `src/app/icon.svg`.
 
 ## Demo (`/demo`)
 
 The demo uses the same night theme: `.theme-night` (in `src/app/globals.css`) on the demo's root
-turns its `background`/`foreground` tokens black and white, with aquamarine for primary actions
+turns its `background`/`foreground` tokens black and white, with the blue accent for primary actions
 and "on" states.
 
 "Try the demo" opens a map editor for a medical supply network: the map on the right, and an
@@ -97,7 +99,7 @@ editor column on the left that runs in the order you'd fill it in:
 Sites are pinned on the map as colored squares marked P, W, or C. A warehouse or clinic that never
 has grid power while it's staffed (so it can't take in medicines at all today) is drawn in black
 and white, letter and all, with a "No power while staffed" row in the legend. After an analysis,
-the sites chosen for solar glow with an aquamarine ring until the network changes; a black and
+the sites chosen for solar glow with a blue ring until the network changes; a black and
 white site that's chosen powers back on in its colour, and one that isn't stays black and white.
 
 On desktop the page fills the window and only the editor column scrolls (phones stack the map
@@ -106,7 +108,7 @@ above the editor and scroll normally). Everything is saved in the browser (`loca
 
 On a first visit a short tooltip tour explains each part, right next to it, with a thin outline
 around the part it's on. It doesn't dim or block the page. Skip or Escape ends it, the arrow keys
-step through it, and the aqua-outlined **Tour** button in the header replays it. Having seen it is
+step through it, and the blue-outlined **Tour** button in the header replays it. Having seen it is
 remembered in `localStorage` (key `convoy.tour.v1`). The stops are in `guided-tour.tsx`; each part
 they point at is marked `data-tour`.
 
@@ -129,11 +131,23 @@ site has power at different hours:
 | Tamale Clinic            | Kumasi Medical Warehouse | Every day 08:00–20:00 | 16:00–24:00 | 390,000 |
 
 The budget is $36,000 at $12,000 a unit, so **3 solar units**. Analyze puts them on **Kumasi
-Medical Warehouse**, **Komfo Anokye Clinic**, and **Tamale Clinic**, cutting the
-population-weighted wait for supplies from about **10.3 h to 6.9 h** (a third shorter) across
-1,740,000 people. Each unit helps, by less each time: 1 unit → 9.3 h, 2 → 7.8 h, 3 → 6.9 h. Cape
-Coast's power already covers its staffed hours, so solar wouldn't change anything there. (The
-figures come from the engine and are the same every run; Gemini's wording varies.)
+Medical Warehouse**, **Komfo Anokye Clinic**, and **Tamale Clinic**, and medicines reach clinics
+**3.4 h sooner on average: 10.3 h → 6.9 h from port to clinic** (33% faster).
+
+- **Where the time goes:** 3.8 h of it is driving, which solar can't change; waiting for a site
+  to be staffed and powered drops from 6.5 h to 3.1 h.
+- **Clinic by clinic:** Komfo Anokye 11.8 h → 4.9 h and Tamale 16.9 h → 12.5 h; Korle Bu (4.1 h)
+  and Cape Coast (7.8 h) don't change. So 1,010,000 of the 1,740,000 people are at clinics that get
+  medicines sooner.
+- **Versus the obvious choice:** solar on the 3 clinics serving the most people (Korle Bu, Komfo
+  Anokye, Tamale) gets 8.9 h; Convoy's plan is 2.0 h faster, because solar at Kumasi Medical
+  Warehouse speeds up both clinics it supplies.
+- **Each unit:** 1 unit → 9.3 h, 2 → 7.8 h, 3 → 6.9 h (saving 1.0 h, then 1.5 h, then 0.9 h). The
+  second unit is worth the most because the sites reinforce each other: once Kumasi Medical
+  Warehouse can take in medicines all day, solar at Komfo Anokye Clinic saves more than it would on
+  its own.
+
+The figures come from the engine and are the same every run; Gemini's wording varies.
 
 ### Data model
 
@@ -219,24 +233,39 @@ hours.
 
 The Next.js server sends the network and the budget's unit count to the Rust optimizer, which
 picks the sites. It also asks for the best sites at every smaller budget (1, 2, … units, up to
-10), which the popup charts and Gemini gets as context. Gemini receives the result and the network's facts (staffed
+10), which the popup charts and Gemini gets as context. Gemini receives the result and the
+network's facts (staffed
 hours, grid power, when each site takes in medicines today and with solar, people served, supply
 links and distances) and explains the choice in short bullets; it never chooses sites or suggests
 other allocations. The result popup shows:
 
-- **Estimated impact** — people served by all clinics, hours saved per person, the combined
-  people-hours, and the population-weighted wait before → after;
+- **Estimated impact** — how much sooner medicines reach clinics on average, and the average
+  port-to-clinic time before → after (with the % faster);
+- **Where the time goes** — two thin bars on one scale, without solar and with the plan, each split
+  into driving (which solar can't change) and waiting for a site to be staffed and powered;
+- **Clinic by clinic** — each clinic's own port-to-clinic time before → after (faster ones first),
+  and how many people are at clinics that get medicines sooner;
+- **Versus the obvious choice** — the plan against solar on the clinics serving the most people,
+  and, when a warehouse is chosen, which clinics it speeds up;
 - **Chosen for solar** — each chosen site: when it takes in medicines today → with solar (or
   "Can't take in medicines today"), its staffed and grid power hours, people served, and its
   supplier and distance;
 - **Why these sites** — Gemini's explanation;
-- **Each extra solar unit** — a thin line chart of the population-weighted wait with no solar and
+- **Each extra solar unit** — a thin line chart of the average port-to-clinic time with no solar and
   with the engine's best sites for 1, 2, … units (from the route's `steps`), labelled at its ends;
   hovering or focusing a point names its sites, and a hidden table gives screen readers the same
   numbers (`budget-curve.tsx`);
-- what the model assumes. The weighted times are model estimates, not measured outcomes: travel is
-  a straight line at 60 km/h, and clinics count by the people they serve. Validate them against
-  real operations data before acting on the recommendations.
+- **How we estimate this** — in plain words: a shipment leaves the port at every hour of the day,
+  travels in a straight line at 60 km/h, and waits at the warehouse and then the clinic until each
+  is staffed and powered; a clinic's time is the average of those 24 trips, and the overall
+  average counts bigger clinics more, by the people they serve. These are model estimates, not
+  measured outcomes.
+
+All of it comes from one engine call: besides the chosen sites, the engine reports the average
+split into travel and waiting, each clinic's own time, and the obvious plan's time
+(`baseline_breakdown`, `optimized_breakdown`, `destinations`, `priority_first`; see
+[API.md](API.md)). `src/lib/solar-allocation/summary.ts` turns that into the popup's plain terms,
+and Gemini gets the same figures under the same names.
 
 The route is public and every new analysis calls Gemini, so it's protected
 (`src/lib/solar-allocation/guard.ts`): each IP gets 30 analyses per 10 minutes and each server

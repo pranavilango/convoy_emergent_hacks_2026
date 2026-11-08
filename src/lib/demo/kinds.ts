@@ -17,7 +17,7 @@ type KindInfo = {
   letter: string;
   plural: string;
   /** Square color on the map and swatch color in the panel. Reads on both the dark map and the
-   *  aquamarine panel (swatches get an ink outline there). */
+   *  blue accent panels (swatches get an ink outline there). */
   color: string;
   description: string;
 };

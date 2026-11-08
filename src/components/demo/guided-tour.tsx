@@ -15,7 +15,7 @@ export type TourStop = {
   body: string;
   /** Which side of the target the tooltip prefers, or "inside" it (for the big map). */
   place: Side | "inside";
-  /** False for a target that already has its own aqua outline (the header's Tour button). */
+  /** False for a target that already has its own accent outline (the header's Tour button). */
   outline?: false;
 };
 
@@ -61,13 +61,13 @@ export const TOUR_STOPS: readonly TourStop[] = [
     target: "map",
     place: "inside",
     title: "The map",
-    body: "Your network as you build it. After you analyze, the sites chosen for solar glow aqua.",
+    body: "Your network as you build it. After you analyze, the sites chosen for solar glow blue.",
   },
   {
     target: "analysis",
     place: "right",
     title: "Analyze",
-    body: "Convoy's optimizer places your solar units where they cut delivery waits the most, weighted by the people each clinic serves, and Gemini explains why. Anything missing is listed here first.",
+    body: "Convoy's optimizer places your solar units where they get medicines from the port to clinics soonest, counting bigger clinics more, and Gemini explains why. Anything missing is listed here first.",
   },
   {
     target: "sample",
@@ -356,7 +356,7 @@ export function GuidedTour({ onClose }: { /** Finished or skipped. */ onClose: (
           key={index}
           aria-hidden
           data-testid="tour-outline"
-          className="pointer-events-none fixed z-40 rounded-sm border border-aqua/70 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-500"
+          className="pointer-events-none fixed z-40 rounded-sm border border-brand/70 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-500"
           style={layout.outline}
         />
       )}
@@ -368,7 +368,7 @@ export function GuidedTour({ onClose }: { /** Finished or skipped. */ onClose: (
         aria-describedby="tour-body"
         onKeyDown={onKeyDown}
         className={cn(
-          "fixed z-40 w-72 rounded-sm border border-aqua/70 bg-background p-4 text-foreground shadow-[0_8px_30px_rgb(0_0_0/0.5)]",
+          "fixed z-40 w-72 rounded-sm border border-brand/70 bg-background p-4 text-foreground shadow-[0_8px_30px_rgb(0_0_0/0.5)]",
           // Glides from one stop to the next.
           "transition-[top,left] duration-500 ease-out motion-reduce:transition-none",
           docked === "top" && "inset-x-3 top-3 w-auto",
@@ -382,7 +382,7 @@ export function GuidedTour({ onClose }: { /** Finished or skipped. */ onClose: (
           <span
             aria-hidden
             className={cn(
-              "absolute h-2 w-2 rotate-45 border-aqua/70 bg-background",
+              "absolute h-2 w-2 rotate-45 border-brand/70 bg-background",
               CARET[layout.caret.side].border,
             )}
             style={CARET[layout.caret.side].style(layout.caret.at)}
@@ -390,7 +390,7 @@ export function GuidedTour({ onClose }: { /** Finished or skipped. */ onClose: (
         )}
         <div className="flex items-baseline justify-between font-mono text-[11px] uppercase tracking-wider">
           <span>
-            <span className="text-aqua">_Tour</span> <span className="opacity-60">{counter}</span>
+            <span className="text-brand">Tour</span> <span className="opacity-60">{counter}</span>
           </span>
           {!last && (
             <button

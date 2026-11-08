@@ -92,7 +92,7 @@ export function GridPowerField({
         </div>
       )}
       <label className="flex w-fit cursor-pointer items-center gap-2 text-sm">
-        {/* A thin outlined box (like the page's other lines) that fills aqua with a tick. */}
+        {/* A thin outlined box (like the page's other lines) that fills blue with a tick. */}
         <span className="relative inline-flex size-4 shrink-0">
           <input
             type="checkbox"
@@ -104,7 +104,7 @@ export function GridPowerField({
                   : { ...lastPowered },
               )
             }
-            className="peer size-4 cursor-pointer appearance-none rounded-sm border border-foreground/70 bg-transparent transition-colors checked:border-aqua checked:bg-aqua hover:border-foreground focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+            className="peer size-4 cursor-pointer appearance-none rounded-sm border border-foreground/70 bg-transparent transition-colors checked:border-brand checked:bg-brand hover:border-foreground focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-foreground"
           />
           <svg
             aria-hidden
@@ -132,7 +132,7 @@ export function GridPowerField({
               need solar most.{" "}
             </>
           )}
-          <span className="text-aqua">With solar: {formatWindow(windows.withSolar)}.</span>
+          <span className="text-brand">With solar: {formatWindow(windows.withSolar)}.</span>
         </p>
       )}
     </div>

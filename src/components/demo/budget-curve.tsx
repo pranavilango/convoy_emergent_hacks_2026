@@ -13,8 +13,8 @@ const PAD_BOTTOM = 6;
 const hours = (h: number) => `${h.toFixed(1)} h`;
 
 /**
- * The budget curve: the population-weighted wait for supplies with no solar, then with the best
- * 1, 2, … units (the optimizer's answer at each budget). One thin aqua line from 0 h at the
+ * The budget curve: the average port-to-clinic time with no solar, then with the best
+ * 1, 2, … units (the optimizer's answer at each budget). One thin blue line from 0 h at the
  * bottom, labelled at its ends; hovering or focusing a point shows its sites below the chart.
  */
 export function BudgetCurve({
@@ -39,7 +39,7 @@ export function BudgetCurve({
   return (
     <div className="space-y-2">
       <p className="text-xs text-white/60">
-        Population-weighted wait for supplies, with the best sites for each number of solar units.
+        Average port-to-clinic time, with the best sites for each number of solar units.
       </p>
       <div
         className="relative mt-5 aspect-[3/1] w-full sm:aspect-[5/1]"
@@ -75,7 +75,7 @@ export function BudgetCurve({
           <polyline
             points={points.map((p, i) => `${x(i)},${y(p.weighted_hours)}`).join(" ")}
             fill="none"
-            className="stroke-aqua"
+            className="stroke-brand"
             strokeWidth={2}
             strokeLinejoin="round"
             strokeLinecap="round"
@@ -87,7 +87,7 @@ export function BudgetCurve({
           <span
             key={p.units}
             aria-hidden
-            className={`pointer-events-none absolute size-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-aqua ring-2 ring-background ${
+            className={`pointer-events-none absolute size-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-brand ring-2 ring-background ${
               i === shown ? "scale-125" : ""
             }`}
             style={{ left: `${x(i)}%`, top: `${y(p.weighted_hours)}%` }}
@@ -120,7 +120,7 @@ export function BudgetCurve({
               key={p.units}
               type="button"
               aria-label={`${p.units === 0 ? "No solar" : `${p.units} ${p.units === 1 ? "unit" : "units"}`}: ${hours(p.weighted_hours)}`}
-              className="absolute top-0 h-full -translate-x-1/2 cursor-default rounded-sm outline-none focus-visible:outline-1 focus-visible:outline-aqua"
+              className="absolute top-0 h-full -translate-x-1/2 cursor-default rounded-sm outline-none focus-visible:outline-1 focus-visible:outline-brand"
               style={{ left: `${x(i)}%`, width: `${width}%` }}
               onMouseEnter={() => setActive(i)}
               onFocus={() => setActive(i)}
@@ -145,7 +145,7 @@ export function BudgetCurve({
       </div>
 
       <p className="flex items-baseline gap-2 text-sm text-white/70" aria-live="polite">
-        <span aria-hidden className="inline-block h-0.5 w-3 shrink-0 translate-y-[-3px] bg-aqua" />
+        <span aria-hidden className="inline-block h-0.5 w-3 shrink-0 translate-y-[-3px] bg-brand" />
         <span>
           <strong className="font-semibold text-white">{hours(point.weighted_hours)}</strong>{" "}
           {point.units === 0
@@ -157,11 +157,11 @@ export function BudgetCurve({
       </p>
 
       <table className="sr-only">
-        <caption>Population-weighted wait for supplies by number of solar units</caption>
+        <caption>Average port-to-clinic time by number of solar units</caption>
         <thead>
           <tr>
             <th scope="col">Solar units</th>
-            <th scope="col">Weighted wait</th>
+            <th scope="col">Average port-to-clinic time</th>
             <th scope="col">Sites with solar</th>
           </tr>
         </thead>

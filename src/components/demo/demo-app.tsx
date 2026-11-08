@@ -15,12 +15,12 @@ import {
   SUPPLIES,
   type LocationKind,
 } from "@/lib/demo/kinds";
-import { formatPeopleHours, totalClinicPopulation } from "@/lib/demo/population";
 import { cannotReceiveToday } from "@/lib/demo/power";
 import { demoActions, useDemoState, type Removed } from "@/lib/demo/store";
 import { closeTour, openTour, useTourOpen } from "@/lib/demo/tour";
 import type { Location } from "@/lib/demo/types";
 import { analysisIssues } from "@/lib/solar-allocation/readiness";
+import { formatHours, summarizeAnalysis } from "@/lib/solar-allocation/summary";
 
 import { AddLocationForm, type DroppedSite } from "./add-location-form";
 import { BudgetSection } from "./budget-section";
@@ -328,9 +328,9 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
           <SectionLabel index="06">Analysis</SectionLabel>
         </h2>
         <p className="text-sm leading-relaxed opacity-75">
-          Convoy&apos;s optimizer picks the warehouses and clinics where your solar units cut the
-          wait for supplies the most, weighted by the people each clinic serves. Gemini explains the
-          choice.
+          Convoy&apos;s optimizer picks the warehouses and clinics where your solar units get
+          medicines from the port to clinics soonest, counting bigger clinics more. Gemini explains
+          the choice.
         </p>
         <Button
           onClick={analyzeNetwork}
@@ -348,7 +348,7 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
             <ul aria-label="Before you analyze" className="space-y-1.5 text-sm text-white/80">
               {issues.slice(0, 5).map((issue) => (
                 <li key={issue} className="flex gap-2">
-                  <span aria-hidden className="text-aqua">
+                  <span aria-hidden className="text-brand">
                     ·
                   </span>
                   {issue}
@@ -364,11 +364,9 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
           <div className="flex items-center justify-between gap-3 border-y border-foreground/20 py-3 text-sm">
             <span className={resultIsCurrent ? "" : "text-white/50"}>
               {resultIsCurrent
-                ? `Last result: ${analysisResult.allocation.selected.length} sites lit on the map, ${formatPeopleHours(
-                    (analysisResult.allocation.baseline_weighted_hours -
-                      analysisResult.allocation.optimized_weighted_hours) *
-                      totalClinicPopulation(locations),
-                  )} saved`
+                ? `Last result: ${analysisResult.allocation.selected.length} sites lit on the map, medicines ${formatHours(
+                    summarizeAnalysis(analysisResult.allocation, locations, connections).saved,
+                  )} sooner on average`
                 : "Out of date: the network changed since the last analysis."}
             </span>
             <Button
@@ -550,7 +548,7 @@ function SampleButton({ onClick }: { onClick: () => void }) {
       type="button"
       onClick={onClick}
       data-tour="sample"
-      className={`fixed right-4 bottom-4 z-20 rounded-sm border border-aqua bg-ink/90 px-4 py-2.5 font-mono text-[11px] uppercase tracking-wider text-aqua shadow-lg backdrop-blur-sm transition-colors hover:bg-aqua hover:text-night md:right-16 md:bottom-9 ${focusRing}`}
+      className={`fixed right-4 bottom-4 z-20 rounded-sm border border-brand bg-ink/90 px-4 py-2.5 font-mono text-[11px] uppercase tracking-wider text-brand shadow-lg backdrop-blur-sm transition-colors hover:bg-brand hover:text-night md:right-16 md:bottom-9 ${focusRing}`}
     >
       Load Ghana sample network
     </button>
@@ -578,7 +576,7 @@ function UndoToast({ removed, onUndo }: { removed: Removed; onUndo: () => void }
       <button
         type="button"
         onClick={onUndo}
-        className="shrink-0 font-mono text-[11px] uppercase tracking-wider text-aqua underline-offset-4 outline-none hover:underline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-aqua"
+        className="shrink-0 font-mono text-[11px] uppercase tracking-wider text-brand underline-offset-4 outline-none hover:underline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-brand"
       >
         Undo
       </button>
@@ -591,11 +589,11 @@ function PlacingBanner({ kind, onCancel }: { kind: LocationKind; onCancel: () =>
   return (
     <div
       role="status"
-      className="absolute inset-x-4 top-4 z-10 flex items-center justify-between gap-4 rounded-sm bg-aqua px-4 py-3 text-night shadow-lg md:left-1/2 md:right-auto md:w-[26rem] md:-translate-x-1/2"
+      className="absolute inset-x-4 top-4 z-10 flex items-center justify-between gap-4 rounded-sm bg-brand px-4 py-3 text-night shadow-lg md:left-1/2 md:right-auto md:w-[26rem] md:-translate-x-1/2"
     >
       <div className="min-w-0">
         <div className="font-mono text-[11px] uppercase tracking-wider opacity-70">
-          _Placing a {KIND_INFO[kind].label.toLowerCase()}
+          Placing a {KIND_INFO[kind].label.toLowerCase()}
         </div>
         <p className="mt-0.5 text-sm">Click the map where it is.</p>
       </div>
@@ -627,11 +625,11 @@ function ConnectBanner({
   return (
     <div
       role="status"
-      className="absolute inset-x-4 top-4 z-10 flex items-center justify-between gap-4 rounded-sm bg-aqua px-4 py-3 text-night shadow-lg md:left-1/2 md:right-auto md:w-[26rem] md:-translate-x-1/2"
+      className="absolute inset-x-4 top-4 z-10 flex items-center justify-between gap-4 rounded-sm bg-brand px-4 py-3 text-night shadow-lg md:left-1/2 md:right-auto md:w-[26rem] md:-translate-x-1/2"
     >
       <div className="min-w-0">
         <div className="font-mono text-[11px] uppercase tracking-wider opacity-70">
-          _Connecting · {connectionCountLabel(count)}
+          Connecting · {connectionCountLabel(count)}
         </div>
         <p className="mt-0.5 truncate text-sm">
           {anyTargets ? (
@@ -674,7 +672,7 @@ function DemoHeader({
           Convoy
         </Link>
         <span className="hidden font-mono text-[11px] uppercase tracking-wider sm:inline">
-          _Demo / Network
+          Demo / Network
         </span>
       </div>
       <div className="flex items-center gap-4 sm:gap-6">
@@ -682,13 +680,13 @@ function DemoHeader({
           {String(count).padStart(2, "0")} {count === 1 ? "location" : "locations"} ·{" "}
           {connectionCountLabel(connectionCount)}
         </span>
-        {/* Always outlined in aqua so it's easy to spot; a white underline on hover. */}
+        {/* Always outlined in the accent so it's easy to spot; a white underline on hover. */}
         <Button
           variant="ghost"
           size="sm"
           data-tour="tour"
           onClick={onStartTour}
-          className="border border-aqua px-2.5 py-1 decoration-white"
+          className="border border-brand px-2.5 py-1 decoration-white"
         >
           Tour
         </Button>
@@ -743,8 +741,8 @@ function Legend({
           </li>
         ))}
         <li className="flex items-center gap-2 border-t border-ink-foreground/15 pt-1.5">
-          {/* Aquamarine like the lines' core (the legend's ink is their outline). */}
-          <span aria-hidden className="inline-block w-3.5 text-center leading-none text-aqua">
+          {/* The accent, like the lines' core (the legend's ink is their outline). */}
+          <span aria-hidden className="inline-block w-3.5 text-center leading-none text-brand">
             →
           </span>
           <span>Supply link</span>
@@ -756,7 +754,7 @@ function Legend({
           <li className="flex items-center gap-2">
             <span
               aria-hidden
-              className="inline-block h-3.5 w-3.5 rounded-sm border-2 border-aqua shadow-[0_0_6px_1px_var(--color-aqua)]"
+              className="inline-block h-3.5 w-3.5 rounded-sm border-2 border-brand shadow-[0_0_6px_1px_var(--color-brand)]"
             />
             <span>Chosen for solar</span>
             <span className="ml-auto pl-3 opacity-60">{String(poweredCount).padStart(2, "0")}</span>
@@ -804,7 +802,7 @@ function MapNotice({ problem }: { problem: MapProblem }) {
   return (
     <div role="status" className="flex h-full items-center justify-center p-8">
       <div className="max-w-md">
-        <div className="font-mono text-[11px] uppercase tracking-wider opacity-70">_Map</div>
+        <div className="font-mono text-[11px] uppercase tracking-wider opacity-70">Map</div>
         <p className="mt-4 text-3xl leading-[1.05] tracking-[-0.04em]">{notice.title}</p>
         <p className="mt-4 text-sm opacity-70">{notice.body}</p>
       </div>

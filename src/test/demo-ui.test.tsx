@@ -124,6 +124,17 @@ describe("DemoApp without an API key", () => {
   });
 });
 
+describe("labels", () => {
+  it("never start with an underscore", () => {
+    render(<DemoApp />);
+    const texts = [...document.body.querySelectorAll("*")]
+      .flatMap((el) => [...el.childNodes])
+      .filter((n) => n.nodeType === Node.TEXT_NODE)
+      .map((n) => n.textContent?.trim() ?? "");
+    expect(texts.filter((t) => t.startsWith("_"))).toEqual([]);
+  });
+});
+
 describe("network editor order", () => {
   it("starts with the budget, the primary constraint, then locations, connections, analysis", () => {
     render(<DemoApp />);
@@ -131,12 +142,12 @@ describe("network editor order", () => {
       .getAllByRole("heading", { level: 2 })
       .map((h) => h.textContent);
     expect(headings).toEqual([
-      "_01 BudgetUSD",
-      "_02 Add a location",
-      expect.stringMatching(/^_03 Location types/),
-      expect.stringMatching(/^_04 Locations/),
-      expect.stringMatching(/^_05 Connections/),
-      "_06 Analysis",
+      "01 BudgetUSD",
+      "02 Add a location",
+      expect.stringMatching(/^03 Location types/),
+      expect.stringMatching(/^04 Locations/),
+      expect.stringMatching(/^05 Connections/),
+      "06 Analysis",
     ]);
   });
 });
@@ -205,12 +216,24 @@ describe("solar allocation analysis", () => {
     expect(screen.queryByRole("list", { name: "Before you analyze" })).toBeNull();
     expect(analyzeButton).toBeEnabled();
 
+    // As the engine answers: totals, driving vs waiting, each clinic, and the obvious choice.
     const allocation = {
       selected: [ids.w, ids.c],
       n: 2,
       solver: "exact",
       baseline_weighted_hours: 21.64,
       optimized_weighted_hours: 11.54,
+      baseline_breakdown: { total_hours: 21.64, travel_hours: 8, waiting_hours: 13.64 },
+      optimized_breakdown: { total_hours: 11.54, travel_hours: 8, waiting_hours: 3.54 },
+      destinations: [
+        {
+          id: ids.c,
+          priority: 1200,
+          baseline: { total_hours: 21.64, travel_hours: 8, waiting_hours: 13.64 },
+          optimized: { total_hours: 11.54, travel_hours: 8, waiting_hours: 3.54 },
+        },
+      ],
+      priority_first: { selected: [ids.c], weighted_hours: 15 },
     };
     const steps = [
       { units: 1, selected: [ids.c], weighted_hours: 15 },
@@ -231,33 +254,53 @@ describe("solar allocation analysis", () => {
     fireEvent.click(analyzeButton);
 
     const dialog = await screen.findByRole("dialog", { name: "Network analysis" });
-    const whySites = within(dialog).getByRole("region", { name: "_Why these sites" });
+    const whySites = within(dialog).getByRole("region", { name: "Why these sites" });
     expect(within(whySites).getAllByRole("listitem")[0]).toHaveTextContent(
       "Mwanza Clinic: serves 1,200 people.",
     );
     expect(within(whySites).getAllByRole("listitem")).toHaveLength(2);
     expect(within(whySites).getByText("Mwanza Clinic:")).toHaveClass("text-white", "font-semibold");
-    expect(within(whySites).getByText("1,200 people")).toHaveClass("text-aqua", "font-semibold");
-    expect(within(dialog).getByText("People affected")).toBeInTheDocument();
-    expect(within(dialog).getAllByText("1,200 people").length).toBeGreaterThan(0);
-    expect(within(dialog).getByText("Hours saved per person")).toBeInTheDocument();
-    expect(within(dialog).getByText("10.1 h")).toBeInTheDocument();
-    expect(within(dialog).getByText("12.1k people-hours")).toBeInTheDocument();
+    expect(within(whySites).getByText("1,200 people")).toHaveClass("text-brand", "font-semibold");
+    // The headline, in plain words: how much sooner, before → after, and how much faster.
+    const impact = within(dialog).getByRole("region", { name: "Estimated impact" });
+    expect(impact).toHaveTextContent("Medicines reach clinics 10.1 h sooner on average");
+    expect(impact).toHaveTextContent("21.6 h → 11.5 h from port to clinic · 47% faster");
+    // Where the time goes: driving never changes; solar cuts the waiting.
+    const split = within(dialog).getByRole("region", { name: "Where the time goes" });
     expect(
-      within(dialog).getByText(/21\.6 h → 11\.5 h per person · 47% shorter/),
+      within(split).getByRole("img", {
+        name: "Without solar: 8.0 h driving and 13.6 h waiting, 21.6 h in all",
+      }),
     ).toBeInTheDocument();
     expect(
-      within(dialog).getByText(
-        (_, element) =>
-          element?.tagName === "LI" &&
-          (element.textContent ?? "").includes(
-            "Model: population-weighted, averages departure times. Solar removes the grid-power limit, while staffing hours still apply.",
-          ),
-      ),
+      within(split).getByRole("img", {
+        name: "With this plan: 8.0 h driving and 3.5 h waiting, 11.5 h in all",
+      }),
     ).toBeInTheDocument();
+    expect(split).toHaveTextContent("Solar can't shorten the drive. It cuts the waiting by 74%");
+    // Clinic by clinic.
+    const clinicTable = within(
+      within(dialog).getByRole("region", { name: "Clinic by clinic" }),
+    ).getByRole("table");
+    const clinicRow = within(clinicTable).getByRole("row", { name: /Mwanza Clinic/ });
+    expect(clinicRow).toHaveTextContent("21.6 h");
+    expect(clinicRow).toHaveTextContent("11.5 h");
+    expect(clinicRow).toHaveTextContent("10.1 h sooner");
+    expect(within(dialog).getByText(/are at clinics that get medicines sooner/)).toHaveTextContent(
+      "1,200 people of 1,200 are at clinics that get medicines sooner.",
+    );
+    // Versus the obvious choice: solar on the biggest clinic only.
+    const obvious = within(dialog).getByRole("region", { name: "Versus the obvious choice" });
+    expect(obvious).toHaveTextContent("Solar on the clinic serving the most people");
+    expect(obvious).toHaveTextContent("15.0 h");
+    expect(obvious).toHaveTextContent(
+      "Convoy's plan gets medicines to clinics 3.5 h sooner on average than the obvious choice. Solar at Central Store speeds up the clinic it supplies (Mwanza Clinic).",
+    );
+    // No jargon anywhere.
+    expect(dialog.textContent).not.toMatch(/weighted|people-hours|per person/i);
     // Each chosen site: when it takes in medicines now (staffed 9–5, powered 8–4) and with solar,
     // people served, and where it's supplied from.
-    const chosen = within(dialog).getByRole("region", { name: "_Chosen for solar" });
+    const chosen = within(dialog).getByRole("region", { name: "Chosen for solar" });
     expect(within(chosen).getAllByText(/Takes in medicines 09:00–16:00/)).toHaveLength(2);
     expect(within(chosen).getAllByText("→ 09:00–17:00 with solar (+1 h a day)")).toHaveLength(2);
     expect(within(chosen).getAllByText(/Grid power 08:00–16:00 \(8 h a day\)/)).toHaveLength(2);
@@ -270,12 +313,15 @@ describe("solar allocation analysis", () => {
         .map((r) => r.getAttribute("aria-labelledby")),
     ).toEqual([
       "allocation-impact-title",
+      "allocation-split-title",
+      "allocation-clinics-title",
+      "allocation-obvious-title",
       "allocation-sites-title",
       "allocation-explanation-title",
       "allocation-curve-title",
     ]);
     // The budget curve: no solar, then the best 1 and 2 units, from the engine's steps.
-    const curve = within(dialog).getByRole("region", { name: "_Each extra solar unit" });
+    const curve = within(dialog).getByRole("region", { name: "Each extra solar unit" });
     const rows = within(within(curve).getByRole("table")).getAllByRole("row").slice(1);
     expect(rows.map((r) => r.textContent)).toEqual([
       "021.6 hNone",
@@ -304,7 +350,7 @@ describe("solar allocation analysis", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close network analysis" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(
-      screen.getByText("Last result: 2 sites lit on the map, 12.1k people-hours saved"),
+      screen.getByText("Last result: 2 sites lit on the map, medicines 10.1 h sooner on average"),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "View result" }));
     expect(screen.getByRole("dialog", { name: "Network analysis" })).toBeInTheDocument();
@@ -757,7 +803,7 @@ describe("AnalysisText", () => {
     expect(within(bullets!).getAllByRole("listitem")).toHaveLength(2);
     expect(within(steps!).getAllByRole("listitem")).toHaveLength(2);
     expect(screen.getByText("Central Store:")).toHaveClass("text-white", "font-semibold");
-    expect(screen.getByText("48,000")).toHaveClass("text-aqua", "font-semibold");
+    expect(screen.getByText("48,000")).toHaveClass("text-brand", "font-semibold");
     expect(screen.getByRole("separator")).toBeInTheDocument();
     expect(screen.getByText("<b>not html</b>")).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/###|\*\*/);

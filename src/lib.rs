@@ -848,6 +848,101 @@ pub fn weighted_time_to_delivery(
     weighted / graph.total_priority()
 }
 
+/// An average delivery time split into time on the road and time spent waiting
+/// for sites to open (for the demo: staffed and powered). `total = travel + waiting`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DeliveryBreakdown {
+    pub total_hours: f64,
+    pub travel_hours: f64,
+    pub waiting_hours: f64,
+}
+
+/// Like [`destination_time_to_delivery`], but also returns the transit part of
+/// the fastest route: `(total, travel)`. On equal totals the earliest leg wins.
+pub fn destination_delivery_detail(
+    route: &Route,
+    departure: f64,
+    upgrades: &UpgradeSet,
+) -> (f64, f64) {
+    let destination_window = effective_window(
+        upgrades,
+        route.destination,
+        route.window,
+        route.solar_window,
+    );
+    let mut best = (f64::INFINITY, 0.0);
+    for leg in &route.legs {
+        let pass_window = effective_window(upgrades, leg.pass_through, leg.window, leg.solar_window);
+        let mut clock = departure + leg.inbound_hours;
+        clock += pass_window.wait_hours(clock);
+        clock += leg.outbound_hours;
+        clock += destination_window.wait_hours(clock);
+        let total = clock - departure;
+        if total < best.0 {
+            best = (total, leg.inbound_hours + leg.outbound_hours);
+        }
+    }
+    best
+}
+
+/// [`average_time_to_delivery`] for one destination, split into travel and waiting.
+pub fn average_delivery_breakdown(
+    route: &Route,
+    departures: &DepartureTimes,
+    upgrades: &UpgradeSet,
+) -> DeliveryBreakdown {
+    let (total, travel) = departures
+        .as_slice()
+        .iter()
+        .map(|&d| destination_delivery_detail(route, d, upgrades))
+        .fold((0.0, 0.0), |(t, r), (dt, dr)| (t + dt, r + dr));
+    let count = departures.len() as f64;
+    let (total, travel) = (total / count, travel / count);
+    DeliveryBreakdown {
+        total_hours: total,
+        travel_hours: travel,
+        waiting_hours: (total - travel).max(0.0),
+    }
+}
+
+/// [`weighted_time_to_delivery`] split into travel and waiting (each weighted
+/// by destination priority the same way).
+pub fn weighted_delivery_breakdown(
+    graph: &Graph,
+    departures: &DepartureTimes,
+    upgrades: &UpgradeSet,
+) -> DeliveryBreakdown {
+    let total_priority = graph.total_priority();
+    let mut sum = DeliveryBreakdown {
+        total_hours: 0.0,
+        travel_hours: 0.0,
+        waiting_hours: 0.0,
+    };
+    for route in graph.routes() {
+        let p = route.priority.value() / total_priority;
+        let b = average_delivery_breakdown(route, departures, upgrades);
+        sum.total_hours += p * b.total_hours;
+        sum.travel_hours += p * b.travel_hours;
+        sum.waiting_hours += p * b.waiting_hours;
+    }
+    sum
+}
+
+/// The obvious plan to compare a solution against: solar on the `n`
+/// destinations with the highest priority (ties: earlier in the file),
+/// ignoring the rest of the network. Ascending node order.
+pub fn priority_first(graph: &Graph, n: usize) -> Vec<NodeIndex> {
+    let mut destinations: Vec<(NodeIndex, f64)> = graph
+        .routes()
+        .iter()
+        .map(|r| (r.destination, r.priority.value()))
+        .collect();
+    destinations.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.get().cmp(&b.0.get())));
+    let mut chosen: Vec<NodeIndex> = destinations.into_iter().take(n).map(|(i, _)| i).collect();
+    chosen.sort_by_key(|i| i.get());
+    chosen
+}
+
 // ---------------------------------------------------------------------------
 // Search
 // ---------------------------------------------------------------------------
@@ -1332,21 +1427,78 @@ pub struct AnalyzeResponse {
     pub solver: SolverUsed,
     pub baseline_weighted_hours: f64,
     pub optimized_weighted_hours: f64,
+    /// The weighted averages split into travel and waiting, without solar.
+    pub baseline_breakdown: DeliveryBreakdown,
+    /// The same with the selected nodes upgraded.
+    pub optimized_breakdown: DeliveryBreakdown,
+    /// Every destination's own average delivery, without and with the selection.
+    pub destinations: Vec<DestinationReport>,
+    /// The obvious alternative, for comparison: see [`priority_first`].
+    pub priority_first: ComparisonPlan,
 }
 
-/// Convert a [`Solution`] into the ids-based response.
-pub fn build_response(graph: &Graph, n: usize, solution: &Solution) -> AnalyzeResponse {
-    AnalyzeResponse {
-        selected: solution
-            .selected
+/// One destination's average delivery, without solar and with the selection.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DestinationReport {
+    pub id: String,
+    pub priority: f64,
+    pub baseline: DeliveryBreakdown,
+    pub optimized: DeliveryBreakdown,
+}
+
+/// Another selection and its objective, to compare the solution against.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ComparisonPlan {
+    pub selected: Vec<String>,
+    pub weighted_hours: f64,
+}
+
+/// Convert a [`Solution`] into the ids-based response, with the breakdowns
+/// and the [`priority_first`] comparison evaluated at `departures`.
+pub fn build_response(
+    graph: &Graph,
+    departures: &DepartureTimes,
+    n: usize,
+    solution: &Solution,
+) -> AnalyzeResponse {
+    let ids = |indices: &[NodeIndex]| -> Vec<String> {
+        indices
             .iter()
             .filter_map(|i| graph.node(*i))
             .map(|node| node.id().to_owned())
-            .collect(),
+            .collect()
+    };
+    let count = graph.node_count();
+    let none = UpgradeSet::new(count);
+    // The solver only ever returns valid indices, so this can't fail; fall back to "none" anyway.
+    let chosen = UpgradeSet::from_indices(count, &solution.selected).unwrap_or_else(|_| none.clone());
+    let obvious = priority_first(graph, n);
+    let obvious_set = UpgradeSet::from_indices(count, &obvious).unwrap_or_else(|_| none.clone());
+    AnalyzeResponse {
+        selected: ids(&solution.selected),
         n,
         solver: solution.solver,
         baseline_weighted_hours: solution.baseline_objective,
         optimized_weighted_hours: solution.optimized_objective,
+        baseline_breakdown: weighted_delivery_breakdown(graph, departures, &none),
+        optimized_breakdown: weighted_delivery_breakdown(graph, departures, &chosen),
+        destinations: graph
+            .routes()
+            .iter()
+            .map(|route| DestinationReport {
+                id: graph
+                    .node(route.destination)
+                    .map(|node| node.id().to_owned())
+                    .unwrap_or_default(),
+                priority: route.priority.value(),
+                baseline: average_delivery_breakdown(route, departures, &none),
+                optimized: average_delivery_breakdown(route, departures, &chosen),
+            })
+            .collect(),
+        priority_first: ComparisonPlan {
+            selected: ids(&obvious),
+            weighted_hours: weighted_time_to_delivery(graph, departures, &obvious_set),
+        },
     }
 }
 
@@ -1359,7 +1511,7 @@ pub fn analyze_bytes(
 ) -> Result<AnalyzeResponse, AnalyzeError> {
     let input = parse_graph_file(bytes)?;
     let solution = solve(&input.graph, &input.departures, n, strategy, config)?;
-    Ok(build_response(&input.graph, n, &solution))
+    Ok(build_response(&input.graph, &input.departures, n, &solution))
 }
 
 // ---------------------------------------------------------------------------

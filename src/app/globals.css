@@ -43,7 +43,7 @@
   --color-ink-foreground: var(--ink-foreground);
   --color-night: var(--night);
   --color-night-navy: var(--night-navy);
-  --color-aqua: var(--aqua);
+  --color-brand: var(--brand);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -86,10 +86,11 @@
   --ink: oklch(0.14 0.015 250);
   --ink-foreground: oklch(0.93 0.02 60);
   /* Landing page: black, deepening to the navy at the top of the Earth photo (#01030e). Text is
-     white, with aqua (same as --background) for what matters most. */
+     white, with the brand accent (sky blue, #4cc9f0) for what matters most. Change the accent
+     here: everything uses `brand` (text-brand, bg-brand, …). */
   --night: oklch(0 0 0);
   --night-navy: oklch(0.103 0.033 264.9);
-  --aqua: oklch(0.78 0.12 178);
+  --brand: oklch(0.782 0.121 222.5); /* #4cc9f0 */
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.129 0.042 264.695);
   --popover: oklch(1 0 0);
@@ -218,8 +219,8 @@
     }
   }
 
-  /* The glow takes the text's own colour, so aquamarine text glows aquamarine and white glows
-     white, like a lit tube on a dark page. */
+  /* The glow takes the text's own colour, so blue text glows blue and white glows white, like a
+     lit tube on a dark page. */
   .flicker-in,
   .power-on-view {
     --power-glow:
@@ -269,7 +270,7 @@
 
   /* The demo's night theme: flips the shared background/foreground tokens, so every
      bg-background / text-foreground / border-foreground inside turns black and white.
-     Aquamarine (`aqua`) marks primary actions and "on" states. */
+     The brand accent (`brand`, sky blue) marks primary actions and "on" states. */
   .theme-night {
     --background: var(--night);
     --foreground: oklch(1 0 0);

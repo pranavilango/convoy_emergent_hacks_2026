@@ -95,9 +95,22 @@ incoming edge, and the graph is (weakly) connected.
   "n": 2,
   "solver": "exact",
   "baseline_weighted_hours": 21.64326036705972,
-  "optimized_weighted_hours": 11.544539568868093
+  "optimized_weighted_hours": 11.544539568868093,
+  "baseline_breakdown": { "total_hours": 21.64, "travel_hours": 6.12, "waiting_hours": 15.52 },
+  "optimized_breakdown": { "total_hours": 11.54, "travel_hours": 6.12, "waiting_hours": 5.42 },
+  "destinations": [
+    {
+      "id": "wajir_clinic",
+      "priority": 40,
+      "baseline": { "total_hours": 21.64, "travel_hours": 6.12, "waiting_hours": 15.52 },
+      "optimized": { "total_hours": 11.54, "travel_hours": 6.12, "waiting_hours": 5.42 }
+    }
+  ],
+  "priority_first": { "selected": ["wajir_clinic"], "weighted_hours": 15.0 }
 }
 ```
+
+(Breakdown numbers above are illustrative, rounded.)
 
 | Field | Meaning |
 |-------|---------|
@@ -106,6 +119,9 @@ incoming edge, and the graph is (weakly) connected.
 | `solver` | `"exact"` or `"greedy"` — what actually ran. |
 | `baseline_weighted_hours` | Objective with no upgrades. |
 | `optimized_weighted_hours` | Objective after upgrading `selected`. |
+| `baseline_breakdown`, `optimized_breakdown` | The objective split into time on the road and time waiting for nodes to open: `total_hours` (= the weighted hours), `travel_hours`, `waiting_hours`, each weighted by priority like the objective. At each departure the fastest route's transit counts as travel; upgrades only ever change the waiting. |
+| `destinations` | Every destination's own average time-to-delivery (unweighted), with its `priority`, as a breakdown without upgrades (`baseline`) and with `selected` upgraded (`optimized`). The objective is the priority-weighted mean of these. |
+| `priority_first` | The obvious alternative for comparison: upgrade the `n` destinations with the highest priority (ties: earlier in the file), ignoring pass-throughs and the network. `selected` ids and its `weighted_hours`. |
 
 ### Error responses
 

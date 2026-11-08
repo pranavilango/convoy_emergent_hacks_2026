@@ -39,11 +39,12 @@ const DEFAULT_ZOOM = 2;
 const SINGLE_LOCATION_ZOOM = 14;
 const FIT_PADDING = { top: 160, right: 60, bottom: 60, left: 60 };
 
-/** Connection lines are an aquamarine core (the site accent) inside an ink casing, like a road on
- *  a map: the ink edge holds against bright imagery, the aquamarine against dark ground and
- *  water. The ink matches the squares' borders. */
+/** Connection lines are a core in the brand accent inside an ink casing, like a road on a map:
+ *  the ink edge holds against bright imagery, the blue against dark ground and water. The ink
+ *  matches the squares' borders. Google Maps can't read CSS variables, so the accent is spelled
+ *  out here (keep it in step with `--brand` in globals.css). */
 const LINE_INK = "#050a0f";
-const LINE_CORE = "#4dd0b7";
+const LINE_CORE = "#4cc9f0";
 /** Squares grow by this much when selected. */
 const ACTIVE_GROWTH_PX = 4;
 /** Space between the arrow tip and the destination square, beyond the square's cream ring. */
@@ -239,7 +240,7 @@ export function MapView({
             <p className="mt-1.5 text-base leading-tight tracking-tight">{selectedLocation.name}</p>
             <p className="mt-1 text-xs leading-snug opacity-60">{selectedLocation.address}</p>
             {poweredIds?.has(selectedLocation.id) && (
-              <p className="mt-2 font-mono text-[10px] uppercase tracking-wider text-aqua">
+              <p className="mt-2 font-mono text-[10px] uppercase tracking-wider text-brand">
                 Chosen for solar
               </p>
             )}
@@ -262,7 +263,7 @@ export function MapView({
                   ))}
                   <li>Grid power {formatPower(selectedLocation.gridPower).toLowerCase()}</li>
                   {cannotReceiveToday(selectedLocation) && (
-                    <li className={poweredIds?.has(selectedLocation.id) ? "text-aqua" : ""}>
+                    <li className={poweredIds?.has(selectedLocation.id) ? "text-brand" : ""}>
                       {poweredIds?.has(selectedLocation.id)
                         ? "Solar lets it take in medicines"
                         : "No power while staffed: can't take in medicines"}
@@ -328,7 +329,7 @@ export function MapView({
       {dropTarget && (
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 border border-aqua bg-aqua/5"
+          className="pointer-events-none absolute inset-0 border border-brand bg-brand/5"
         />
       )}
     </div>
@@ -427,7 +428,7 @@ function LocationSquare({
 }: {
   location: Location;
   state: SquareState;
-  /** Chosen for solar by the latest analysis: an aquamarine ring that powers on. */
+  /** Chosen for solar by the latest analysis: a ring in the brand accent that powers on. */
   powered: boolean;
   /** Never has grid power while it's staffed, and not (yet) chosen for solar: its colour is
    *  shown in black and white, letter and all, like a building with the lights off. */
@@ -454,7 +455,7 @@ function LocationSquare({
         {powered && (
           <span
             aria-hidden
-            className="flicker-in pointer-events-none absolute -inset-[5px] rounded-sm border-2 border-aqua shadow-[0_0_12px_2px_var(--color-aqua)]"
+            className="flicker-in pointer-events-none absolute -inset-[5px] rounded-sm border-2 border-brand shadow-[0_0_12px_2px_var(--color-brand)]"
           />
         )}
         <span
@@ -487,7 +488,7 @@ function LocationSquare({
           <span className="pointer-events-none absolute bottom-full left-1/2 mb-2 hidden max-w-48 -translate-x-1/2 truncate whitespace-nowrap rounded-sm border border-ink-foreground/25 bg-ink px-2 py-1 text-xs text-ink-foreground group-hover:block">
             {location.name}
             {state === "linked" && <span className="ml-1.5 opacity-60">· supplied</span>}
-            {powered && <span className="ml-1.5 text-aqua">· solar</span>}
+            {powered && <span className="ml-1.5 text-brand">· solar</span>}
             {dark && <span className="ml-1.5 opacity-60">· no power while staffed</span>}
           </span>
         )}
@@ -500,7 +501,7 @@ function LocationSquare({
 
 type LineEmphasis = "normal" | "strong" | "dim";
 
-/** `core` is the aquamarine stroke; the ink casing adds 1px on each side. */
+/** `core` is the blue stroke; the ink casing adds 1px on each side. */
 const LINE_STYLE: Record<LineEmphasis, { core: number; opacity: number; z: number }> = {
   normal: { core: 1.5, opacity: 1, z: 2 },
   strong: { core: 2.5, opacity: 1, z: 4 },
@@ -523,7 +524,7 @@ function arrowIcon(color: string, weight: number, opacity: number): google.maps.
 }
 
 /**
- * A directed connection: a thin aquamarine line with an ink outline from one square to another,
+ * A directed connection: a thin blue line with an ink outline from one square to another,
  * ending in a matching open chevron just outside the destination square. The line stops short of
  * the destination's centre by `arrowGap` screen pixels (recomputed as you zoom) so the arrow is
  * never hidden under the square. Its length on the map is the straight-line distance shown in
@@ -592,7 +593,7 @@ function ConnectionLine({
 }
 
 /** Dashed line with an arrowhead from the origin to the cursor while choosing a destination,
- *  in the same aquamarine-in-ink style as the connection lines. */
+ *  in the same blue-in-ink style as the connection lines. */
 function DraftLine({ origin }: { origin: Location }) {
   const map = useMap();
   useEffect(() => {
@@ -697,7 +698,7 @@ function CardButton({ onClick, children }: { onClick: () => void; children: Reac
         e.stopPropagation();
         onClick();
       }}
-      className="rounded-sm bg-aqua px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-night outline-none transition-colors hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-aqua"
+      className="rounded-sm bg-brand px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-night outline-none transition-colors hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
     >
       {children}
     </button>

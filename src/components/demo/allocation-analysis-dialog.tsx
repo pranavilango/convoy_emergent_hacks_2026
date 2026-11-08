@@ -4,7 +4,7 @@ import type { KeyboardEvent, ReactNode } from "react";
 
 import { distanceKm, formatDistance } from "@/lib/demo/geometry";
 import { kindLabel } from "@/lib/demo/kinds";
-import { formatPeopleHours, peopleLabel, totalClinicPopulation } from "@/lib/demo/population";
+import { peopleLabel } from "@/lib/demo/population";
 import {
   describeStaffing,
   formatPower,
@@ -14,7 +14,9 @@ import {
 } from "@/lib/demo/power";
 import type { Connection, Location } from "@/lib/demo/types";
 import type { BudgetStep, SolarAllocation } from "@/lib/solar-allocation/analyze";
+import { summarizeAnalysis } from "@/lib/solar-allocation/summary";
 
+import { ClinicTimesTable, ImpactHeadline, ObviousComparison, TimeSplit } from "./analysis-figures";
 import { AnalysisText } from "./analysis-text";
 import { BudgetCurve } from "./budget-curve";
 import { Button } from "./controls";
@@ -66,7 +68,7 @@ export function AllocationAnalysisDialog({
         <div className="flex items-start justify-between gap-6 border-b border-foreground/30 pb-5">
           <div>
             <p className="font-mono text-[11px] uppercase tracking-wider opacity-70">
-              _Chosen by Convoy&apos;s optimizer · explained by Gemini
+              Chosen by Convoy&apos;s optimizer · explained by Gemini
             </p>
             <h2
               id="allocation-dialog-title"
@@ -122,8 +124,6 @@ export function AllocationAnalysisDialog({
   );
 }
 
-const hours = (h: number) => `${h.toFixed(1)} h`;
-
 function Heading({ id, children }: { id: string; children: ReactNode }) {
   return (
     <h3 id={id} className="font-mono text-[11px] uppercase tracking-wider text-white/60">
@@ -132,7 +132,10 @@ function Heading({ id, children }: { id: string; children: ReactNode }) {
   );
 }
 
-/** The optimizer's answer: the effect, the chosen sites, what each unit buys, and why. */
+/**
+ * The optimizer's answer, in plain terms: how much sooner medicines reach clinics, where the time
+ * goes, each clinic, the obvious alternative, the chosen sites, why, and what each unit buys.
+ */
 function AnalysisResult({
   result,
   locations,
@@ -144,66 +147,43 @@ function AnalysisResult({
 }) {
   const { allocation, analysis } = result;
   const byId = new Map(locations.map((l) => [l.id, l]));
-  const saved = allocation.baseline_weighted_hours - allocation.optimized_weighted_hours;
-  const clinicPopulation = totalClinicPopulation(locations);
-  const peopleHoursSaved = saved * clinicPopulation;
-  const share =
-    allocation.baseline_weighted_hours > 0 ? saved / allocation.baseline_weighted_hours : 0;
+  const summary = summarizeAnalysis(allocation, locations, connections);
   const coversEverySite =
     allocation.selected.length < allocation.n &&
-    allocation.selected.length === locations.filter((l) => l.kind !== "port").length;
+    allocation.selected.length === locations.filter((l) => l.kind !== "port").length
+      ? allocation.selected.length
+      : null;
 
   return (
     <div className="space-y-8 py-6">
-      <section aria-labelledby="allocation-impact-title" className="space-y-2">
-        <Heading id="allocation-impact-title">_Estimated impact</Heading>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="border border-white/15 p-4">
-            <p className="font-mono text-[11px] uppercase tracking-wider text-white/60">
-              People affected
-            </p>
-            <p className="mt-1 text-3xl font-semibold tracking-tight text-aqua">
-              {peopleLabel(clinicPopulation)}
-            </p>
-            <p className="mt-1 text-xs text-white/60">Across all clinic populations</p>
-          </div>
-          <div className="border border-white/15 p-4">
-            <p className="font-mono text-[11px] uppercase tracking-wider text-white/60">
-              Hours saved per person
-            </p>
-            <p className="mt-1 text-3xl font-semibold tracking-tight text-aqua">{hours(saved)}</p>
-            <p className="mt-1 text-xs text-white/60">
-              Estimated average supply arrival time saved
-            </p>
-          </div>
-        </div>
-        <p className="text-sm text-white/70">
-          Combined estimate:{" "}
-          <span className="font-semibold text-aqua">{formatPeopleHours(peopleHoursSaved)}</span>
-          <span className="font-semibold text-aqua">
-            {` · ${hours(allocation.baseline_weighted_hours)} → ${hours(allocation.optimized_weighted_hours)} per person`}
-            {share > 0 && ` · ${Math.round(share * 100)}% shorter`}
-          </span>
-        </p>
-        <ul className="list-disc space-y-1 pl-5 text-sm text-white/60">
-          <li>
-            Model: population-weighted, averages departure times. Solar removes the grid-power
-            limit, while staffing hours still apply.
-          </li>
-          {coversEverySite && (
-            <li>
-              Budget covers all{" "}
-              <strong className="font-semibold text-aqua">
-                {allocation.selected.length} eligible sites
-              </strong>
-              .
-            </li>
-          )}
-        </ul>
+      <section aria-labelledby="allocation-impact-title" className="space-y-3">
+        <Heading id="allocation-impact-title">Estimated impact</Heading>
+        <ImpactHeadline summary={summary} coversEverySite={coversEverySite} />
       </section>
 
+      {summary.split && (
+        <section aria-labelledby="allocation-split-title" className="space-y-3">
+          <Heading id="allocation-split-title">Where the time goes</Heading>
+          <TimeSplit split={summary.split} before={summary.before} after={summary.after} />
+        </section>
+      )}
+
+      {summary.clinics && summary.clinics.length > 0 && (
+        <section aria-labelledby="allocation-clinics-title" className="space-y-3">
+          <Heading id="allocation-clinics-title">Clinic by clinic</Heading>
+          <ClinicTimesTable summary={summary} />
+        </section>
+      )}
+
+      {summary.obvious && summary.obvious.sites.length > 0 && (
+        <section aria-labelledby="allocation-obvious-title" className="space-y-3">
+          <Heading id="allocation-obvious-title">Versus the obvious choice</Heading>
+          <ObviousComparison obvious={summary.obvious} after={summary.after} />
+        </section>
+      )}
+
       <section aria-labelledby="allocation-sites-title" className="space-y-3">
-        <Heading id="allocation-sites-title">_Chosen for solar</Heading>
+        <Heading id="allocation-sites-title">Chosen for solar</Heading>
         <ol className="divide-y divide-white/15 border-y border-white/15">
           {allocation.selected.map((id) => {
             const site = byId.get(id);
@@ -231,7 +211,7 @@ function AnalysisResult({
                       {windows.today
                         ? `Takes in medicines ${formatWindow(windows.today)}`
                         : "Can't take in medicines today"}{" "}
-                      <span className="text-aqua">
+                      <span className="text-brand">
                         →{" "}
                         {windowHours(windows.withSolar) === 24
                           ? "around the clock"
@@ -264,13 +244,13 @@ function AnalysisResult({
       </section>
 
       <section aria-labelledby="allocation-explanation-title" className="space-y-3">
-        <Heading id="allocation-explanation-title">_Why these sites</Heading>
+        <Heading id="allocation-explanation-title">Why these sites</Heading>
         <AnalysisText text={analysis} />
       </section>
 
       {result.steps.length > 0 && (
         <section aria-labelledby="allocation-curve-title" className="space-y-2">
-          <Heading id="allocation-curve-title">_Each extra solar unit</Heading>
+          <Heading id="allocation-curve-title">Each extra solar unit</Heading>
           <BudgetCurve
             baselineHours={allocation.baseline_weighted_hours}
             steps={result.steps}
@@ -279,12 +259,17 @@ function AnalysisResult({
         </section>
       )}
 
-      <p className="border-t border-white/15 pt-4 text-xs leading-relaxed text-white/50">
-        Modelled estimates, not measurements: travel is a straight line at 60 km/h, a site takes in
-        medicines only while it&apos;s staffed (its widest daily hours) and powered, and clinics
-        count by the people they serve. Check them against real delivery records before committing
-        funds.
-      </p>
+      <div className="space-y-1.5 border-t border-white/15 pt-4 text-xs leading-relaxed text-white/50">
+        <p className="font-mono text-[10px] uppercase tracking-wider">How we estimate this</p>
+        <p>
+          We send a shipment from the port at every hour of the day. It travels in a straight line
+          at 60 km/h and waits at the warehouse and then the clinic until each is staffed and has
+          power to keep medicines cold. A clinic&apos;s time is the average of those 24 trips; the
+          overall average counts bigger clinics more, by the people they serve. A site with no power
+          while it&apos;s staffed counts as a full day&apos;s wait. These are model estimates: check
+          them against real delivery records before committing funds.
+        </p>
+      </div>
     </div>
   );
 }

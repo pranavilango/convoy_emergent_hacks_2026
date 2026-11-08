@@ -34,6 +34,12 @@ describe("Home page", () => {
     expect(document.body.textContent).not.toMatch(/Panel sizing|Battery backup|batteries/);
     expect(screen.queryByText(/Try it on the Ghana sample network/)).toBeNull();
     expect(screen.getByText("Power Planner")).toBeInTheDocument();
+    // No label starts with an underscore ("06 What you get", not "_06 …").
+    const texts = [...document.body.querySelectorAll("*")]
+      .flatMap((el) => [...el.childNodes])
+      .filter((n) => n.nodeType === Node.TEXT_NODE)
+      .map((n) => n.textContent?.trim() ?? "");
+    expect(texts.filter((t) => t.startsWith("_"))).toEqual([]);
     expect(screen.getByAltText(/^Earth at night/)).toBeInTheDocument();
   });
 
@@ -53,10 +59,10 @@ describe("Home page", () => {
     expect(parseFloat(headline.style.animationDelay)).toBe(Math.min(...starts));
     expect(new Set(starts).size).toBe(starts.length);
 
-    // The navbar logo stays steady and is all white.
+    // The navbar logo stays steady and is in the brand accent.
     const logo = container.querySelector("header svg");
     expect(logo?.closest(".flicker-in")).toBeNull();
-    expect(logo).toHaveClass("fill-aqua", "stroke-aqua");
+    expect(logo).toHaveClass("fill-brand", "stroke-brand");
   });
 
   it("flickers on the kilowatt line and the footer as they scroll into view", () => {

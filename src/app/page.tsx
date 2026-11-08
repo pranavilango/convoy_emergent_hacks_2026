@@ -32,7 +32,10 @@ const outputs = [
     "Grid gaps",
     "When each site can take in medicines today, staffed and powered, and the hours solar adds.",
   ],
-  ["Delivery waits", "The average wait for supplies before and after, weighted by people served."],
+  [
+    "Delivery waits",
+    "How long medicines take from port to clinic, before and after, and how much is waiting for power.",
+  ],
   ["Budget curve", "What each extra solar unit buys, so you can see where funding pays off most."],
   [
     "Explained plans",
@@ -83,22 +86,22 @@ export default function Home() {
             Convoy
           </div>
           <nav className="hidden gap-8 text-sm text-white/75 md:flex">
-            <a href="#problem" className="transition-colors hover:text-aqua">
+            <a href="#problem" className="transition-colors hover:text-brand">
               Problem
             </a>
-            <a href="#solution" className="transition-colors hover:text-aqua">
+            <a href="#solution" className="transition-colors hover:text-brand">
               Solution
             </a>
-            <a href="#how" className="transition-colors hover:text-aqua">
+            <a href="#how" className="transition-colors hover:text-brand">
               How it works
             </a>
-            <a href="#results" className="transition-colors hover:text-aqua">
+            <a href="#results" className="transition-colors hover:text-brand">
               What you get
             </a>
           </nav>
           <Link
             href="/demo"
-            className="rounded-sm bg-aqua px-4 py-2 text-sm font-medium text-night transition-colors hover:bg-white"
+            className="rounded-sm bg-brand px-4 py-2 text-sm font-medium text-night transition-colors hover:bg-white"
           >
             Try the demo
           </Link>
@@ -107,12 +110,12 @@ export default function Home() {
         {/* Hero */}
         <section className="px-6 pb-16 pt-4 md:px-10">
           <div className="flex justify-between font-mono text-[11px] uppercase tracking-wider text-white/60">
-            <span>_01</span>
+            <span>01</span>
             <span>Built for last-mile health</span>
           </div>
 
           <div className="mt-16 grid grid-cols-1 items-end gap-8 md:grid-cols-[1fr_auto]">
-            <h1 className="text-[26vw] font-medium leading-[0.8] tracking-[-0.07em] text-aqua md:text-[19vw]">
+            <h1 className="text-[26vw] font-medium leading-[0.8] tracking-[-0.07em] text-brand md:text-[19vw]">
               <span className="flicker-in" style={lightsOn(0, 1)}>
                 Convoy
               </span>
@@ -138,7 +141,7 @@ export default function Home() {
               </p>
               <a
                 href="#solution"
-                className="mt-4 flex items-center justify-between border-b border-aqua/60 pb-1 text-aqua transition-colors hover:border-aqua"
+                className="mt-4 flex items-center justify-between border-b border-brand/60 pb-1 text-brand transition-colors hover:border-brand"
               >
                 Explore more <span>↗</span>
               </a>
@@ -190,7 +193,7 @@ export default function Home() {
           className="pointer-events-none absolute inset-x-0 bottom-0 h-48 bg-linear-to-b from-transparent to-night"
         />
         <div className="absolute inset-x-0 bottom-0 flex justify-between px-6 py-6 font-mono text-[11px] uppercase tracking-wider text-white/60 md:px-10">
-          <span>_02 Your network, mapped</span>
+          <span>02 Your network, mapped</span>
           <span>Port → Warehouse → Clinic</span>
         </div>
       </section>
@@ -198,11 +201,11 @@ export default function Home() {
       {/* Problem */}
       <section id="problem" className="px-6 py-28 md:px-10">
         <div className="font-mono text-[11px] uppercase tracking-wider text-white/60">
-          _03 The problem
+          03 The problem
         </div>
         <p className="mt-10 max-w-6xl text-4xl leading-[1.05] tracking-[-0.04em] md:text-7xl">
           You run a rural clinic. Your vaccine fridge runs on a grid that keeps cutting out.{" "}
-          <PowerOn className="text-aqua">Every kilowatt counts.</PowerOn>
+          <PowerOn className="text-brand">Every kilowatt counts.</PowerOn>
         </p>
         <div className="mt-20 grid gap-10 border-t border-white/15 pt-10 md:grid-cols-3">
           {problems.map(([t, d]) => (
@@ -217,24 +220,24 @@ export default function Home() {
       {/* Solution */}
       <section id="solution" className="border-t border-white/15 px-6 py-28 md:px-10">
         <div className="font-mono text-[11px] uppercase tracking-wider text-white/60">
-          _04 The solution
+          04 The solution
         </div>
         <h2 className="mt-10 max-w-6xl text-4xl leading-[1.05] tracking-[-0.04em] md:text-7xl">
-          Convoy decides where <span className="text-aqua">solar power does the most good</span>{" "}
+          Convoy decides where <span className="text-brand">solar power does the most good</span>{" "}
           across your medical supply network.
         </h2>
         <p className="mt-8 max-w-xl text-lg text-white/75">
           Map your ports, warehouses, and clinics. Convoy weighs how supplies flow between them, how
           far they travel, how many people each clinic serves, and when each site is staffed and has
           power. Then it tells you which sites to equip first with the budget you have, how much
-          shorter the wait for supplies becomes, and why.
+          sooner medicines reach each clinic, and why.
         </p>
       </section>
 
       {/* How */}
       <section id="how" className="border-t border-white/15 px-6 py-28 md:px-10">
         <div className="flex justify-between font-mono text-[11px] uppercase tracking-wider text-white/60">
-          <span>_05 Map your network</span>
+          <span>05 Map your network</span>
           <span>6 inputs → 1 plan</span>
         </div>
         <div className="mt-12 divide-y divide-white/15 border-y border-white/15">
@@ -243,7 +246,7 @@ export default function Home() {
               key={n}
               className="grid grid-cols-[3rem_1fr] items-baseline gap-4 py-6 md:grid-cols-[6rem_1fr_1fr]"
             >
-              <span className="font-mono text-xs text-aqua">{n}</span>
+              <span className="font-mono text-xs text-brand">{n}</span>
               <span className="text-4xl tracking-[-0.04em] md:text-6xl">{t}</span>
               <span className="col-start-2 text-sm text-white/70 md:col-start-auto md:text-right">
                 {d}
@@ -256,7 +259,7 @@ export default function Home() {
       {/* Results */}
       <section id="results" className="border-t border-white/15 px-6 py-28 md:px-10">
         <div className="flex justify-between font-mono text-[11px] uppercase tracking-wider text-white/60">
-          <span>_06 What you get</span>
+          <span>06 What you get</span>
           <span>1 plan → 5 answers</span>
         </div>
         <div className="mt-12 divide-y divide-white/15 border-y border-white/15">
@@ -265,7 +268,7 @@ export default function Home() {
               key={t}
               className="grid grid-cols-[3rem_1fr] items-baseline gap-4 py-6 md:grid-cols-[6rem_1fr_1fr]"
             >
-              <span className="font-mono text-xs text-aqua">{String(i + 1).padStart(2, "0")}</span>
+              <span className="font-mono text-xs text-brand">{String(i + 1).padStart(2, "0")}</span>
               <span className="text-4xl tracking-[-0.04em] md:text-6xl">{t}</span>
               <span className="col-start-2 text-sm text-white/70 md:col-start-auto md:text-right">
                 {d}
@@ -277,7 +280,7 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="border-t border-white/15 px-6 py-16 md:px-10">
-        <p className="text-[18vw] leading-[0.8] tracking-[-0.07em] text-aqua">
+        <p className="text-[18vw] leading-[0.8] tracking-[-0.07em] text-brand">
           <PowerOn>Power care.</PowerOn>
         </p>
         <div className="mt-10 flex justify-between font-mono text-[11px] uppercase tracking-wider text-white/50">

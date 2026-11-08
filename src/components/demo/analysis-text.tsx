@@ -70,7 +70,7 @@ function blocks(text: string): ReactNode[] {
         return <hr key={i} className="border-foreground/20" />;
       case "list": {
         const items = block.items.map((item, j) => (
-          <li key={j} className="marker:text-aqua">
+          <li key={j} className="marker:text-brand">
             {listItem(item)}
           </li>
         ));
@@ -124,7 +124,7 @@ function inline(text: string): ReactNode[] {
     const key = match.index;
     if (bold !== undefined)
       out.push(
-        <strong key={key} className="font-semibold text-aqua">
+        <strong key={key} className="font-semibold text-brand">
           {bold}
         </strong>,
       );

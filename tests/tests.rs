@@ -1350,7 +1350,7 @@ fn build_response_maps_indices_to_ids() {
         optimized_objective: 0.0,
         solver: SolverUsed::Exact,
     };
-    let r = build_response(&g, 2, &sol);
+    let r = build_response(&g, &DepartureTimes::every_hour(), 2, &sol);
     assert_eq!(r.selected, vec!["P".to_owned(), "D".to_owned()]);
     assert_eq!(r.n, 2);
     assert_eq!(r.solver, SolverUsed::Exact);
@@ -1982,4 +1982,102 @@ fn closed_warehouse_is_also_modelled() {
     )
     .unwrap();
     assert_eq!(solution.selected, vec![ix(1)]);
+}
+
+// ---------------------------------------------------------------------------
+// Breakdowns (travel vs waiting), per-destination reports, and the
+// priority-first comparison
+// ---------------------------------------------------------------------------
+
+#[test]
+fn breakdown_splits_the_average_into_travel_and_waiting() {
+    // D is 1 degree of longitude east of P on the equator: about 1.853 h at 60 km/h.
+    let g = Graph::new(
+        vec![
+            src("S", 0.0, 0.0),
+            pass("P", 0.0, 0.0, 8, 10),
+            dest("D", 0.0, 1.0, 12, 14, 1.0),
+        ],
+        edges(&[(0, 1), (1, 2)]),
+    )
+    .unwrap();
+    let travel = coord(0.0, 0.0).travel_hours(coord(0.0, 1.0));
+    let departures = DepartureTimes::every_hour();
+    for set in [UpgradeSet::new(3), UpgradeSet::from_indices(3, &[ix(1), ix(2)]).unwrap()] {
+        let b = average_delivery_breakdown(&g.routes()[0], &departures, &set);
+        assert_close(b.total_hours, average_time_to_delivery(&g.routes()[0], &departures, &set));
+        assert_close(b.travel_hours, travel); // solar never changes the drive
+        assert_close(b.waiting_hours, b.total_hours - travel);
+    }
+    // Both open 24/7: nothing to wait for.
+    let both = UpgradeSet::from_indices(3, &[ix(1), ix(2)]).unwrap();
+    assert_close(average_delivery_breakdown(&g.routes()[0], &departures, &both).waiting_hours, 0.0);
+}
+
+#[test]
+fn weighted_breakdown_matches_the_objective_on_random_networks() {
+    let departures = DepartureTimes::every_hour();
+    for seed in 1..=12 {
+        let g = random_graph(seed, 2, 3, 4);
+        let candidates = candidates(&g);
+        let set = UpgradeSet::from_indices(g.node_count(), &candidates[..2]).unwrap();
+        for upgrades in [UpgradeSet::new(g.node_count()), set] {
+            let b = weighted_delivery_breakdown(&g, &departures, &upgrades);
+            assert_close(b.total_hours, weighted_time_to_delivery(&g, &departures, &upgrades));
+            assert_close(b.travel_hours + b.waiting_hours, b.total_hours);
+            assert!(b.waiting_hours >= 0.0 && b.travel_hours >= 0.0);
+        }
+    }
+}
+
+#[test]
+fn priority_first_takes_the_highest_priority_destinations() {
+    let g = Graph::new(
+        vec![
+            src("S", 0.0, 0.0),
+            pass("P", 0.0, 0.0, 8, 10),
+            dest("small", 0.0, 0.0, 12, 14, 5.0),
+            dest("big", 0.0, 0.0, 12, 14, 50.0),
+            dest("tie-a", 0.0, 0.0, 12, 14, 20.0),
+            dest("tie-b", 0.0, 0.0, 12, 14, 20.0),
+        ],
+        edges(&[(0, 1), (1, 2), (1, 3), (1, 4), (1, 5)]),
+    )
+    .unwrap();
+    assert_eq!(priority_first(&g, 1), vec![ix(3)]);
+    // Ties go to the earlier node; the result is in node order.
+    assert_eq!(priority_first(&g, 2), vec![ix(3), ix(4)]);
+    // Never more than there are destinations, and never a pass-through.
+    assert_eq!(priority_first(&g, 10), vec![ix(2), ix(3), ix(4), ix(5)]);
+}
+
+#[test]
+fn analyze_bytes_reports_breakdowns_destinations_and_the_comparison() {
+    let r = analyze_bytes(ZERO_CHAIN_JSON.as_bytes(), 1, Strategy::Auto, &SolverConfig::default()).unwrap();
+    // Zero transit: all of it is waiting.
+    assert_close(r.baseline_breakdown.total_hours, 14.5);
+    assert_close(r.baseline_breakdown.travel_hours, 0.0);
+    assert_close(r.baseline_breakdown.waiting_hours, 14.5);
+    assert_close(r.optimized_breakdown.total_hours, r.optimized_weighted_hours);
+    assert_eq!(r.destinations.len(), 1);
+    assert_eq!(r.destinations[0].id, "D");
+    assert_close(r.destinations[0].priority, 1.0);
+    assert_close(r.destinations[0].baseline.total_hours, 14.5);
+    assert_close(r.destinations[0].optimized.total_hours, 9.625);
+    // The obvious plan, solar on the one clinic (D), is worse than Convoy's (P).
+    assert_eq!(r.priority_first.selected, vec!["D".to_owned()]);
+    assert_close(r.priority_first.weighted_hours, 253.0 / 24.0);
+    assert!(r.priority_first.weighted_hours > r.optimized_weighted_hours);
+}
+
+#[test]
+fn analyze_response_json_has_the_new_fields() {
+    let r = analyze_bytes(ZERO_CHAIN_JSON.as_bytes(), 1, Strategy::Auto, &SolverConfig::default()).unwrap();
+    let v = serde_json::to_value(&r).unwrap();
+    for key in ["baseline_breakdown", "optimized_breakdown", "destinations", "priority_first"] {
+        assert!(v.get(key).is_some(), "missing {key}");
+    }
+    assert!(v["baseline_breakdown"]["waiting_hours"].is_number());
+    assert_eq!(v["destinations"][0]["id"], "D");
+    assert_eq!(v["priority_first"]["selected"], serde_json::json!(["D"]));
 }

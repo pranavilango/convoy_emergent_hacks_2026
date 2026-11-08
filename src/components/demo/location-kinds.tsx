@@ -175,7 +175,7 @@ export function LocationKinds({
                   row,
                   "-mx-2 w-[calc(100%+1rem)] cursor-grab rounded-sm px-2 text-left transition-colors hover:bg-white/5 active:cursor-grabbing",
                   "outline-none focus-visible:outline-1 focus-visible:outline-foreground",
-                  active && "bg-white/5 ring-1 ring-aqua",
+                  active && "bg-white/5 ring-1 ring-brand",
                 )}
               >
                 {content}

@@ -107,7 +107,12 @@ describe("solar allocation analysis", () => {
     // Guardrails: explain, don't re-decide; no ids or method talk.
     expect(prompt).toContain("at most 12 words per bullet");
     expect(prompt).toContain("do not bold the label before the colon");
-    expect(prompt).toContain("Do not suggest or compare other allocations");
+    expect(prompt).toContain(
+      "Do not suggest other allocations or compare with any except the obvious alternative given",
+    );
+    // Plain terms only: no "weighted" or "people-hours" in what Gemini writes.
+    expect(prompt).toContain("never say 'weighted', 'population-weighted', 'people-hours'");
+    expect(prompt).toMatch(/averagePortToClinicHours\W+withoutSolar\W+21\.6\W+withPlan\W+11\.5/);
     expect(prompt).toContain("Never mention ids, algorithms, solvers");
     // Field names stay out of the explanation ("weightedDeliveryHours changed from …").
     expect(prompt).toContain("Never write field names or camelCase keys from the facts");

@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 
 /**
- * The Convoy logo mark: a trapezium body, wide at the top, on two wheels, all in aqua. Drawn on
+ * The Convoy logo mark: a trapezium body, wide at the top, on two wheels, all in the brand accent. Drawn on
  * a 32×24 grid; src/app/icon.svg is the same drawing on a black tile for the browser tab.
  */
 export function ConvoyMark({ className }: { className?: string }) {
@@ -9,7 +9,7 @@ export function ConvoyMark({ className }: { className?: string }) {
     <svg
       viewBox="0 0 32 24"
       aria-hidden
-      className={cn("aspect-[4/3] h-4 w-auto shrink-0 fill-aqua stroke-aqua", className)}
+      className={cn("aspect-[4/3] h-4 w-auto shrink-0 fill-brand stroke-brand", className)}
       strokeWidth={1.5}
       strokeLinejoin="round"
     >
