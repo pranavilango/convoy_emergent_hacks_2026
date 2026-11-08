@@ -4,7 +4,8 @@ import { DemoApp } from "@/components/demo/demo-app";
 
 export const metadata: Metadata = {
   title: "Demo",
-  description: "Map your locations — stores, kitchens, depots — and see your network at a glance.",
+  description:
+    "Map your medical supply network — ports, warehouses, and clinics — and how supplies flow between them.",
 };
 
 export default function DemoPage() {

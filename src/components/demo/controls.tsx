@@ -98,6 +98,43 @@ export function TextInput({ className, ...props }: InputHTMLAttributes<HTMLInput
   );
 }
 
+/** A small row of mutually exclusive toggle buttons (e.g. Sea / Air), styled like the hours
+ *  editor's Open/Closed switch. */
+export function Segmented<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: readonly { value: T; label: string }[];
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div role="group" aria-label={label} className="flex gap-1.5">
+      {options.map((o) => {
+        const active = o.value === value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(o.value)}
+            className={cn(
+              "rounded-sm border border-foreground px-3 py-1 font-mono text-[11px] uppercase tracking-wider transition-colors",
+              active ? "bg-foreground text-background" : "opacity-70 hover:opacity-100",
+              focusRing,
+            )}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function Swatch({ color, className }: { color: string; className?: string }) {
   return (
     <span

@@ -1,15 +1,15 @@
 # Convoy
 
-A preconfigured linear-time logistics analysis platform for SMEs to optimize scaling.
+A solar power allocation planner for medical warehouses and clinics in low-resource regions.
 
-**Problem.** Imagine you are a local bakery trying to deliver cupcakes to more customers. You have
-limited resources, so how you spend them is crucial. Existing software requires technical
-knowledge, is expensive, and doesn't tell you what to do next.
+**Problem.** A rural clinic keeps vaccines and insulin in a fridge that runs on a grid that keeps
+cutting out. Solar panels and batteries fix that, but budgets cover a few sites, never all of them,
+and today they go to whoever asks first rather than where they protect the most care.
 
-**Solution.** Convoy is a growth planner built specifically for small businesses. Upload your
-current network (locations, working hours, order sizes, and vehicles) and Convoy tells you which
-practical changes will have the highest impact: where to open a new store, which neighbourhood to
-expand delivery to, optimal working hours, and so on.
+**Solution.** Convoy maps a medical supply network (the ports supplies arrive through, the
+warehouses that store them, and the clinics that use them) and decides where solar power does the
+most good. It weighs how supplies flow between sites, how far they travel, and when each site is
+staffed and needs power, then says which sites to equip first and what to give them.
 
 ## Stack
 
@@ -39,25 +39,34 @@ npm run dev        # http://localhost:3000
 
 ## Demo (`/demo`)
 
-"Try the demo" opens a map editor. Search an address, give it a type (Factory, Warehouse, Retail
-store, or your own) and its working hours, and it's pinned on the map as a colored square.
-Connect locations to describe the network: select a square, press **Connect**, then click
-destination squares (click again to unlink). You can also connect from the panel. Everything is
-saved in the browser (`localStorage`, key `convoy.demo.v1`). Each visitor sees only their own
-data, and clearing site data resets it.
+"Try the demo" opens a map editor for a medical supply network. Search an address and add it as a
+**port** (sea or air), **warehouse**, or **clinic**; it's pinned on the map as a colored square.
+Warehouses and clinics get working hours (the grid, the region, and staffing all vary); ports are
+always open. Connect sites to show how supplies flow: select a port or warehouse, press
+**Connect**, then click the sites it supplies (click again to unlink). You can also connect from
+the panel. Everything is saved in the browser (`localStorage`, key `convoy.demo.v2`). Each visitor
+sees only their own data, and clearing site data resets it.
 
-The network is a directed graph, ready to hand to the planning engine later:
+The network is a directed graph, ready to hand to the allocation engine:
 
-- **Locations** are the nodes. Each has `hours`: one list of `{ open, close }` ranges per day
-  (`mon`–`sun`), in minutes since midnight. An empty list means closed. `close < open` runs past
-  midnight, and `close: 1440` means "until midnight". Locations saved before hours existed have
-  `hours: null`.
-- **Connections** are the edges, stored as `{ id, fromId, toId }`. A connection only records that
-  `fromId` links to `toId`: there's no distance or cost. A→B and B→A are separate connections.
+- **Locations** are the nodes, each with a `kind`: `port`, `warehouse`, or `clinic`. Ports have
+  `portMode` `"sea"` or `"air"` (null for other kinds). `hours` is one list of `{ open, close }`
+  ranges per day (`mon`–`sun`), in minutes since midnight. An empty list means closed,
+  `close < open` runs past midnight, and `close: 1440` means "until midnight". Ports are always
+  24/7.
+- **Connections** are the edges, stored as `{ id, fromId, toId }`. Supplies flow one way, so the
+  only allowed links are port → warehouse and warehouse → clinic (no loops, nothing backwards,
+  no skipping a step). Changing a site's type removes links that no longer fit, after asking.
+- **Distance** isn't stored: it's the straight-line (great-circle) distance between the two ends,
+  from `distanceKm()` in `geometry.ts`, so it's always in step with the locations.
+
+Data saved by the earlier version of the demo (factories, retail stores, `convoy.demo.v1`) is
+discarded on load.
 
 - Page: `src/app/demo/page.tsx`. UI: `src/components/demo/`.
-- State: `src/lib/demo/`. `reducer.ts` holds the rules, `graph.ts` the connection helpers,
-  `hours.ts` working hours, and `store.ts` handles saving. Swap `store.ts` to move to a backend.
+- State: `src/lib/demo/`. `kinds.ts` defines the three kinds and the supply rule, `reducer.ts`
+  enforces it, `graph.ts` has the connection helpers, `hours.ts` working hours, `geometry.ts`
+  distance, and `store.ts` handles saving. Swap `store.ts` to move to a backend.
 
 ### Google Maps setup
 

@@ -5,14 +5,15 @@ import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { findConnection, outgoing } from "@/lib/demo/graph";
+import { canSupply, KIND_INFO, LOCATION_KINDS, SUPPLIES } from "@/lib/demo/kinds";
 import { demoActions, useDemoState } from "@/lib/demo/store";
-import type { Location, LocationType } from "@/lib/demo/types";
+import type { Location } from "@/lib/demo/types";
 
 import { AddLocationForm } from "./add-location-form";
 import { focusRing } from "./controls";
 import { ConnectionsManager } from "./connections-manager";
+import { LocationKinds } from "./location-kinds";
 import { LocationList } from "./location-list";
-import { LocationTypeManager } from "./location-type-manager";
 import { connectionCountLabel, MapView, type FocusRequest } from "./map-view";
 import type { Selection } from "./selection";
 
@@ -29,7 +30,7 @@ declare global {
 }
 
 export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) {
-  const { types, locations, connections } = useDemoState();
+  const { locations, connections } = useDemoState();
   const [rawSelection, setSelection] = useState<Selection>(null);
   const [rawConnectingFrom, setConnectingFrom] = useState<string | null>(null);
   const [focus, setFocus] = useState<FocusRequest | null>(null);
@@ -48,15 +49,18 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
     };
   }, [apiKey, mapId]);
 
-  // Ignore selections that point at something that no longer exists (e.g. deleted with its type).
+  // Ignore selections that point at something that no longer exists.
   const selection: Selection =
     rawSelection?.kind === "location" && locations.some((l) => l.id === rawSelection.id)
       ? rawSelection
       : rawSelection?.kind === "connection" && connections.some((c) => c.id === rawSelection.id)
         ? rawSelection
         : null;
+  // Only ports and warehouses supply anything, so only they can be connected from.
   const connectingFrom =
-    rawConnectingFrom && !problem && locations.some((l) => l.id === rawConnectingFrom)
+    rawConnectingFrom &&
+    !problem &&
+    locations.some((l) => l.id === rawConnectingFrom && SUPPLIES[l.kind] !== null)
       ? rawConnectingFrom
       : null;
   const connectingLocation = connectingFrom
@@ -97,28 +101,28 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
     setConnectingFrom(null);
   }
 
-  /** In connect mode, clicking a square toggles the connection origin → that square. */
+  /** In connect mode, clicking a square toggles the supply link origin → that square. */
   function toggleConnection(targetId: string) {
-    if (!connectingFrom || targetId === connectingFrom) return;
-    const existing = findConnection(connections, connectingFrom, targetId);
+    const origin = connectingLocation;
+    const target = locations.find((l) => l.id === targetId);
+    if (!origin || !target || !canSupply(origin.kind, target.kind)) return;
+    const existing = findConnection(connections, origin.id, targetId);
     if (existing) demoActions.removeConnection(existing.id);
-    else demoActions.connectLocations(connectingFrom, targetId);
+    else demoActions.connectLocations(origin.id, targetId);
   }
 
   const panel = (
     <div className="space-y-12 px-6 py-8 md:px-8">
       <AddLocationForm
-        types={types}
         searchAvailable={problem === null}
         onAdded={(id) => {
           setConnectingFrom(null);
           setSelection({ kind: "location", id });
         }}
       />
-      <LocationTypeManager types={types} locations={locations} />
+      <LocationKinds locations={locations} />
       <LocationList
         locations={locations}
-        types={types}
         connections={connections}
         selectedId={selection?.kind === "location" ? selection.id : null}
         onSelect={selectLocationFromPanel}
@@ -126,7 +130,6 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
       />
       <ConnectionsManager
         locations={locations}
-        types={types}
         connections={connections}
         selectedConnectionId={selection?.kind === "connection" ? selection.id : null}
         onSelectConnection={selectConnectionFromPanel}
@@ -143,7 +146,6 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
           mapId={mapId || FALLBACK_MAP_ID}
           locations={locations}
           connections={connections}
-          types={types}
           selection={selection}
           connectingFrom={connectingFrom}
           focus={focus}
@@ -157,12 +159,11 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
           onBackgroundClick={() => (connectingFrom ? stopConnecting() : setSelection(null))}
         />
       )}
-      {!problem && (
-        <Legend types={types} locations={locations} connectionCount={connections.length} />
-      )}
+      {!problem && <Legend locations={locations} connectionCount={connections.length} />}
       {connectingLocation && (
         <ConnectBanner
           origin={connectingLocation}
+          locations={locations}
           count={outgoing(connections, connectingLocation.id).length}
           onDone={stopConnecting}
         />
@@ -197,13 +198,18 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
 
 function ConnectBanner({
   origin,
+  locations,
   count,
   onDone,
 }: {
   origin: Location;
+  locations: Location[];
   count: number;
   onDone: () => void;
 }) {
+  const target = SUPPLIES[origin.kind];
+  const targets = target ? KIND_INFO[target].plural.toLowerCase() : "";
+  const anyTargets = target !== null && locations.some((l) => l.kind === target);
   return (
     <div
       role="status"
@@ -214,7 +220,13 @@ function ConnectBanner({
           _Connecting · {connectionCountLabel(count)}
         </div>
         <p className="mt-0.5 truncate text-sm">
-          Click squares to link <strong>{origin.name}</strong> → them. Click again to unlink.
+          {anyTargets ? (
+            <>
+              Click {targets} that <strong>{origin.name}</strong> supplies. Click again to unlink.
+            </>
+          ) : (
+            <>No {targets} on the map yet. Add one to connect it.</>
+          )}
         </p>
       </div>
       <button
@@ -260,31 +272,26 @@ function DemoHeader({ count, connectionCount }: { count: number; connectionCount
 }
 
 function Legend({
-  types,
   locations,
   connectionCount,
 }: {
-  types: LocationType[];
   locations: Location[];
   connectionCount: number;
 }) {
-  if (types.length === 0) return null;
-  const counts = new Map<string, number>();
-  for (const l of locations) counts.set(l.typeId, (counts.get(l.typeId) ?? 0) + 1);
   return (
     // Bottom-left, above Google's logo, so it never collides with the connect banner up top.
     <div className="pointer-events-none absolute bottom-9 left-3 rounded-sm bg-ink/90 px-3 py-2.5 font-mono text-[11px] uppercase tracking-wider text-ink-foreground shadow-lg backdrop-blur-sm">
       <ul className="space-y-1.5">
-        {types.map((t) => (
-          <li key={t.id} className="flex items-center gap-2">
+        {LOCATION_KINDS.map((kind) => (
+          <li key={kind} className="flex items-center gap-2">
             <span
               aria-hidden
               className="inline-block h-2.5 w-2.5 rounded-sm"
-              style={{ backgroundColor: t.color }}
+              style={{ backgroundColor: KIND_INFO[kind].color }}
             />
-            <span className="max-w-40 truncate">{t.name}</span>
+            <span>{KIND_INFO[kind].plural}</span>
             <span className="ml-auto pl-3 opacity-60">
-              {String(counts.get(t.id) ?? 0).padStart(2, "0")}
+              {String(locations.filter((l) => l.kind === kind).length).padStart(2, "0")}
             </span>
           </li>
         ))}
@@ -293,7 +300,7 @@ function Legend({
           <span aria-hidden className="inline-block w-2.5 text-center leading-none">
             →
           </span>
-          <span>Connection</span>
+          <span>Supply link</span>
           <span className="ml-auto pl-3 opacity-60">
             {String(connectionCount).padStart(2, "0")}
           </span>

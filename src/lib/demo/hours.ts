@@ -43,6 +43,8 @@ export const HOURS_PRESETS = [
 ] as const;
 
 export const DEFAULT_HOURS: WeeklyHours = HOURS_PRESETS[0].hours;
+/** Ports never close. */
+export const ALWAYS_OPEN: WeeklyHours = HOURS_PRESETS[2].hours;
 
 export function cloneHours(hours: WeeklyHours): WeeklyHours {
   return week((d) => hours[d].map((r) => ({ ...r })));

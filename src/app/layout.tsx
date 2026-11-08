@@ -25,7 +25,7 @@ export const metadata: Metadata = {
     template: "%s · Convoy",
   },
   description:
-    "A preconfigured linear-time logistics analysis platform for SMEs to optimize scaling.",
+    "Convoy allocates solar power across medical warehouses and clinics in low-resource regions.",
   openGraph: {
     type: "website",
     siteName: "Convoy",

@@ -1,11 +1,5 @@
 import type { WeeklyHours } from "./hours";
-
-export type LocationType = {
-  id: string;
-  name: string;
-  /** Hex color, one of TYPE_COLORS. */
-  color: string;
-};
+import type { LocationKind, PortMode } from "./kinds";
 
 export type Location = {
   id: string;
@@ -16,15 +10,17 @@ export type Location = {
   placeId?: string;
   lat: number;
   lng: number;
-  typeId: string;
-  /** Weekly working hours. null only for locations saved before hours existed. */
-  hours: WeeklyHours | null;
+  kind: LocationKind;
+  /** Air or sea for ports; null for every other kind. */
+  portMode: PortMode | null;
+  /** Weekly working hours. Always 24/7 for ports. */
+  hours: WeeklyHours;
   createdAt: string;
 };
 
 /**
- * A directed link `fromId → toId` between two locations (e.g. factory → warehouse). It only
- * records that the link exists: no distance or cost. A→B and B→A are separate connections.
+ * A directed supply link `fromId → toId`: port → warehouse or warehouse → clinic. Its distance
+ * isn't stored; it's the straight line between the two locations (see `distanceKm`).
  */
 export type Connection = {
   id: string;
@@ -33,10 +29,8 @@ export type Connection = {
 };
 
 export type DemoState = {
-  types: LocationType[];
   locations: Location[];
   connections: Connection[];
 };
 
-/** New locations must come with working hours. */
-export type NewLocation = Omit<Location, "id" | "createdAt" | "hours"> & { hours: WeeklyHours };
+export type NewLocation = Omit<Location, "id" | "createdAt">;

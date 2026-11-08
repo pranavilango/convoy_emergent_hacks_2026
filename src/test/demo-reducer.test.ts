@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { pointBeforeEnd, screenDistance, visualMidpoint } from "@/lib/demo/geometry";
+import {
+  distanceKm,
+  formatDistance,
+  pointBeforeEnd,
+  screenDistance,
+  visualMidpoint,
+} from "@/lib/demo/geometry";
 import {
   connectionsOf,
   degrees,
@@ -10,6 +16,7 @@ import {
   outgoing,
 } from "@/lib/demo/graph";
 import {
+  ALWAYS_OPEN,
   cloneHours,
   DEFAULT_HOURS,
   HOURS_PRESETS,
@@ -17,216 +24,205 @@ import {
   parseHours,
   summarizeHours,
 } from "@/lib/demo/hours";
-import { INITIAL_STATE, parseState, reducer, typeNameError } from "@/lib/demo/reducer";
+import { canSupply, kindLabel, LOCATION_KINDS, type LocationKind } from "@/lib/demo/kinds";
+import { connectionsBrokenByKind, INITIAL_STATE, parseState, reducer } from "@/lib/demo/reducer";
 import type { DemoState, NewLocation } from "@/lib/demo/types";
 
-const place = (typeId: string, overrides: Partial<NewLocation> = {}): NewLocation => ({
-  name: "Bakery",
-  address: "1 High St",
+const site = (kind: LocationKind, overrides: Partial<NewLocation> = {}): NewLocation => ({
+  name: "Site",
+  address: "1 Harbour Rd",
   placeId: "p1",
-  lat: 51.5,
-  lng: -0.12,
-  typeId,
+  lat: -6.8,
+  lng: 39.28,
+  kind,
+  portMode: kind === "port" ? "sea" : null,
   hours: cloneHours(DEFAULT_HOURS),
   ...overrides,
 });
 
-function withLocations(): DemoState {
+const add = (s: DemoState, id: string, location: NewLocation) =>
+  reducer(s, { type: "addLocation", id, createdAt: "t", location });
+
+const connect = (s: DemoState, id: string, fromId: string, toId: string) =>
+  reducer(s, { type: "addConnection", id, fromId, toId });
+
+/** Port p, warehouses w1 and w2, clinic c. */
+function network(): DemoState {
   let s = INITIAL_STATE;
-  s = reducer(s, { type: "addLocation", id: "a", createdAt: "t", location: place("factory") });
-  s = reducer(s, { type: "addLocation", id: "b", createdAt: "t", location: place("factory") });
-  s = reducer(s, { type: "addLocation", id: "c", createdAt: "t", location: place("warehouse") });
+  s = add(s, "p", site("port"));
+  s = add(s, "w1", site("warehouse"));
+  s = add(s, "w2", site("warehouse"));
+  s = add(s, "c", site("clinic"));
   return s;
 }
 
-describe("demo reducer", () => {
-  it("starts with factory, warehouse, and retail store", () => {
-    expect(INITIAL_STATE.types.map((t) => t.name)).toEqual([
-      "Factory",
-      "Warehouse",
-      "Retail store",
-    ]);
-  });
+/** p → w1 → c. */
+function chain(): DemoState {
+  return connect(connect(network(), "pw", "p", "w1"), "wc", "w1", "c");
+}
 
-  it("adds a type with a trimmed name and rejects duplicates case-insensitively", () => {
-    const s = reducer(INITIAL_STATE, {
-      type: "addType",
-      id: "k",
-      name: "  Dark   kitchen ",
-      color: "#ff7aa8",
-    });
-    expect(s.types.at(-1)).toEqual({ id: "k", name: "Dark kitchen", color: "#ff7aa8" });
-    expect(reducer(s, { type: "addType", id: "k2", name: "dark KITCHEN", color: "#ff7aa8" })).toBe(
-      s,
+describe("supply chain rule", () => {
+  it("only allows port → warehouse and warehouse → clinic", () => {
+    const allowed = LOCATION_KINDS.flatMap((from) =>
+      LOCATION_KINDS.filter((to) => canSupply(from, to)).map((to) => `${from}→${to}`),
     );
-    expect(typeNameError(s.types, "Dark Kitchen")).toMatch(/already exists/);
-    expect(typeNameError(s.types, "   ")).toMatch(/name/);
+    expect(allowed).toEqual(["port→warehouse", "warehouse→clinic"]);
   });
 
-  it("rejects colors outside the palette", () => {
-    expect(reducer(INITIAL_STATE, { type: "addType", id: "x", name: "X", color: "red" })).toBe(
-      INITIAL_STATE,
-    );
-  });
-
-  it("renames a type without colliding with itself", () => {
-    const s = reducer(INITIAL_STATE, { type: "updateType", id: "factory", name: "factory" });
-    expect(s.types[0]?.name).toBe("factory");
-    expect(reducer(s, { type: "updateType", id: "factory", name: "Warehouse" })).toBe(s);
-  });
-
-  it("only adds locations that reference an existing type and have coordinates", () => {
-    const s = withLocations();
-    expect(s.locations.map((l) => l.id)).toEqual(["a", "b", "c"]);
-    expect(
-      reducer(s, { type: "addLocation", id: "d", createdAt: "t", location: place("nope") }),
-    ).toBe(s);
-    expect(
-      reducer(s, {
-        type: "addLocation",
-        id: "d",
-        createdAt: "t",
-        location: place("factory", { lat: NaN }),
-      }),
-    ).toBe(s);
-  });
-
-  it("falls back to the address when a location has no name", () => {
-    const s = reducer(INITIAL_STATE, {
-      type: "addLocation",
-      id: "a",
-      createdAt: "t",
-      location: place("factory", { name: "  " }),
-    });
-    expect(s.locations[0]?.name).toBe("1 High St");
-  });
-
-  it("removing a type with reassignTo moves its locations", () => {
-    const s = reducer(withLocations(), {
-      type: "removeType",
-      id: "factory",
-      reassignTo: "warehouse",
-    });
-    expect(s.types.map((t) => t.id)).toEqual(["warehouse", "retail-store"]);
-    expect(s.locations.map((l) => l.typeId)).toEqual(["warehouse", "warehouse", "warehouse"]);
-  });
-
-  it("removing a type without reassignTo deletes its locations", () => {
-    const s = reducer(withLocations(), { type: "removeType", id: "factory" });
-    expect(s.locations.map((l) => l.id)).toEqual(["c"]);
-  });
-
-  it("refuses to reassign to the type being removed or to an unknown type", () => {
-    const s = withLocations();
-    expect(reducer(s, { type: "removeType", id: "factory", reassignTo: "factory" })).toBe(s);
-    expect(reducer(s, { type: "removeType", id: "factory", reassignTo: "ghost" })).toBe(s);
-  });
-
-  it("updates and removes locations", () => {
-    let s = withLocations();
-    s = reducer(s, {
-      type: "updateLocation",
-      id: "a",
-      name: "Main kitchen",
-      typeId: "retail-store",
-    });
-    expect(s.locations[0]).toMatchObject({ name: "Main kitchen", typeId: "retail-store" });
-    s = reducer(s, { type: "removeLocation", id: "a" });
-    expect(s.locations.map((l) => l.id)).toEqual(["b", "c"]);
-  });
-
-  const connect = (s: DemoState, id: string, fromId: string, toId: string) =>
-    reducer(s, { type: "addConnection", id, fromId, toId });
-
-  it("adds directed connections", () => {
-    const s = connect(withLocations(), "cb", "c", "b");
-    expect(s.connections).toEqual([{ id: "cb", fromId: "c", toId: "b" }]);
-  });
-
-  it("rejects an exact duplicate but allows the reverse direction", () => {
-    const s = connect(withLocations(), "ab", "a", "b");
-    expect(connect(s, "dup", "a", "b")).toBe(s);
-    expect(connect(s, "ba", "b", "a").connections.map((c) => c.id)).toEqual(["ab", "ba"]);
-  });
-
-  it("rejects self-connections, unknown locations, and reused ids", () => {
-    const s = withLocations();
-    expect(connect(s, "self", "a", "a")).toBe(s);
-    expect(connect(s, "missing", "a", "missing")).toBe(s);
-    const once = connect(s, "x", "a", "b");
-    expect(connect(once, "x", "b", "c")).toBe(once);
-  });
-
-  it("removes connections", () => {
-    let s = connect(withLocations(), "ab", "a", "b");
-    s = reducer(s, { type: "removeConnection", id: "ab" });
-    expect(s.connections).toEqual([]);
-  });
-
-  it("removes a location's incoming and outgoing connections with it", () => {
-    let s = withLocations();
-    s = connect(s, "ab", "a", "b");
-    s = connect(s, "ca", "c", "a");
-    s = connect(s, "bc", "b", "c");
-    s = reducer(s, { type: "removeLocation", id: "a" });
-    expect(s.connections.map((c) => c.id)).toEqual(["bc"]);
-  });
-
-  it("removes connections whose locations are deleted with a type", () => {
-    let s = connect(withLocations(), "ac", "a", "c");
-    s = reducer(s, { type: "removeType", id: "factory" });
-    expect(s.connections).toEqual([]);
-  });
-
-  it("keeps connections when a type's locations are moved to another type", () => {
-    let s = connect(withLocations(), "ac", "a", "c");
-    s = reducer(s, { type: "removeType", id: "factory", reassignTo: "retail-store" });
-    expect(s.connections).toEqual([{ id: "ac", fromId: "a", toId: "c" }]);
+  it("labels ports with their mode", () => {
+    expect(kindLabel({ kind: "port", portMode: "air" })).toBe("Port · Air");
+    expect(kindLabel({ kind: "clinic", portMode: null })).toBe("Clinic");
   });
 });
 
-describe("working hours in the reducer", () => {
-  it("stores a copy of the hours given when adding a location", () => {
-    const hours = cloneHours(HOURS_PRESETS[2].hours);
-    const s = reducer(INITIAL_STATE, {
-      type: "addLocation",
-      id: "a",
-      createdAt: "t",
-      location: place("factory", { hours }),
-    });
-    hours.mon = [];
-    expect(s.locations[0]?.hours?.mon).toEqual([{ open: 0, close: 1440 }]);
+describe("adding locations", () => {
+  it("adds every kind", () => {
+    expect(network().locations.map((l) => [l.id, l.kind])).toEqual([
+      ["p", "port"],
+      ["w1", "warehouse"],
+      ["w2", "warehouse"],
+      ["c", "clinic"],
+    ]);
   });
 
-  it("refuses to add or update a location with invalid hours", () => {
+  it("keeps ports open 24/7 whatever hours are passed, and requires air or sea", () => {
+    const s = add(INITIAL_STATE, "p", site("port", { portMode: "air", hours: DEFAULT_HOURS }));
+    expect(s.locations[0]).toMatchObject({ portMode: "air", hours: ALWAYS_OPEN });
+    expect(add(INITIAL_STATE, "p", site("port", { portMode: null }))).toBe(INITIAL_STATE);
+  });
+
+  it("drops a port mode given to a non-port", () => {
+    const s = add(INITIAL_STATE, "w", site("warehouse", { portMode: "air" }));
+    expect(s.locations[0]?.portMode).toBeNull();
+  });
+
+  it("stores a copy of the hours, and refuses invalid ones", () => {
+    const hours = cloneHours(HOURS_PRESETS[1].hours);
+    const s = add(INITIAL_STATE, "c", site("clinic", { hours }));
+    hours.mon = [];
+    expect(s.locations[0]?.hours.mon).toEqual([{ open: 540, close: 1020 }]);
+
     const bad = cloneHours(DEFAULT_HOURS);
     bad.tue = [{ open: 600, close: 600 }];
-    expect(
-      reducer(INITIAL_STATE, {
-        type: "addLocation",
-        id: "a",
-        createdAt: "t",
-        location: place("factory", { hours: bad }),
-      }),
-    ).toBe(INITIAL_STATE);
-    const s = withLocations();
-    expect(reducer(s, { type: "updateLocation", id: "a", hours: bad })).toBe(s);
+    expect(add(INITIAL_STATE, "c", site("clinic", { hours: bad }))).toBe(INITIAL_STATE);
   });
 
-  it("updates hours", () => {
-    const s = reducer(withLocations(), {
+  it("refuses unknown kinds, missing coordinates, and reused ids", () => {
+    const s = network();
+    expect(add(s, "x", site("factory" as LocationKind))).toBe(s);
+    expect(add(s, "x", site("clinic", { lat: NaN }))).toBe(s);
+    expect(add(s, "p", site("clinic"))).toBe(s);
+  });
+
+  it("falls back to the address when a location has no name", () => {
+    const s = add(INITIAL_STATE, "c", site("clinic", { name: "  " }));
+    expect(s.locations[0]?.name).toBe("1 Harbour Rd");
+  });
+});
+
+describe("updating locations", () => {
+  it("renames and removes locations", () => {
+    let s = reducer(network(), { type: "updateLocation", id: "c", name: "  St  Luke's " });
+    expect(s.locations[3]?.name).toBe("St Luke's");
+    s = reducer(s, { type: "removeLocation", id: "c" });
+    expect(s.locations.map((l) => l.id)).toEqual(["p", "w1", "w2"]);
+  });
+
+  it("updates hours for warehouses and clinics but not ports", () => {
+    const s = network();
+    const next = reducer(s, { type: "updateLocation", id: "w1", hours: HOURS_PRESETS[1].hours });
+    expect(next.locations[1]?.hours.sun).toEqual([{ open: 540, close: 1020 }]);
+    expect(reducer(s, { type: "updateLocation", id: "p", hours: DEFAULT_HOURS })).toBe(s);
+    const bad = cloneHours(DEFAULT_HOURS);
+    bad.wed = [{ open: 900, close: 900 }];
+    expect(reducer(s, { type: "updateLocation", id: "w1", hours: bad })).toBe(s);
+  });
+
+  it("switches a port between sea and air, and refuses a mode for other kinds", () => {
+    const s = network();
+    expect(
+      reducer(s, { type: "updateLocation", id: "p", portMode: "air" }).locations[0]?.portMode,
+    ).toBe("air");
+    expect(reducer(s, { type: "updateLocation", id: "c", portMode: "air" })).toBe(s);
+  });
+
+  it("turning a site into a port makes it 24/7 sea by default", () => {
+    const s = reducer(network(), { type: "updateLocation", id: "c", kind: "port" });
+    expect(s.locations[3]).toMatchObject({ kind: "port", portMode: "sea", hours: ALWAYS_OPEN });
+  });
+
+  it("turning a port into another kind gives it default hours to edit", () => {
+    const s = reducer(network(), { type: "updateLocation", id: "p", kind: "clinic" });
+    expect(s.locations[0]).toMatchObject({ kind: "clinic", portMode: null, hours: DEFAULT_HOURS });
+  });
+
+  it("keeps a clinic's hours when it becomes a warehouse", () => {
+    let s = reducer(network(), {
       type: "updateLocation",
-      id: "a",
+      id: "c",
       hours: HOURS_PRESETS[1].hours,
     });
-    expect(s.locations[0]?.hours?.sun).toEqual([{ open: 540, close: 1020 }]);
+    s = reducer(s, { type: "updateLocation", id: "c", kind: "warehouse" });
+    expect(s.locations[3]?.hours).toEqual(HOURS_PRESETS[1].hours);
+  });
+
+  it("removes connections the new kind can't have", () => {
+    const s = chain();
+    expect(connectionsBrokenByKind(s, "w1", "clinic").map((c) => c.id)).toEqual(["pw", "wc"]);
+    expect(connectionsBrokenByKind(s, "c", "warehouse").map((c) => c.id)).toEqual(["wc"]);
+    expect(connectionsBrokenByKind(s, "w1", "warehouse")).toEqual([]);
+
+    const next = reducer(s, { type: "updateLocation", id: "c", kind: "warehouse" });
+    expect(next.connections.map((c) => c.id)).toEqual(["pw"]);
+    // Renaming without changing kind keeps every connection.
+    expect(reducer(s, { type: "updateLocation", id: "w1", name: "Hub" }).connections).toBe(
+      s.connections,
+    );
+  });
+});
+
+describe("connections", () => {
+  it("adds port → warehouse and warehouse → clinic", () => {
+    expect(chain().connections).toEqual([
+      { id: "pw", fromId: "p", toId: "w1" },
+      { id: "wc", fromId: "w1", toId: "c" },
+    ]);
+  });
+
+  it("refuses links against the flow or that skip a step", () => {
+    const s = network();
+    for (const [from, to] of [
+      ["w1", "p"], // backwards
+      ["c", "w1"], // backwards
+      ["p", "c"], // skips the warehouse
+      ["w1", "w2"], // warehouse to warehouse
+      ["c", "c"], // self
+    ] as const) {
+      expect(connect(s, "x", from, to)).toBe(s);
+    }
+  });
+
+  it("refuses duplicates, unknown locations, and reused ids", () => {
+    const s = chain();
+    expect(connect(s, "dup", "p", "w1")).toBe(s);
+    expect(connect(s, "x", "p", "missing")).toBe(s);
+    expect(connect(s, "pw", "p", "w2")).toBe(s);
+  });
+
+  it("removes connections, and a location's connections with it", () => {
+    let s = chain();
+    s = reducer(s, { type: "removeConnection", id: "pw" });
+    expect(s.connections.map((c) => c.id)).toEqual(["wc"]);
+    s = connect(s, "pw2", "p", "w2");
+    s = reducer(s, { type: "removeLocation", id: "w1" });
+    expect(s.connections.map((c) => c.id)).toEqual(["pw2"]);
   });
 });
 
 describe("hours helpers", () => {
   it("summarises consecutive identical days", () => {
     expect(summarizeHours(DEFAULT_HOURS)).toEqual(["Mon–Fri 09:00–17:00", "Sat–Sun Closed"]);
-    expect(summarizeHours(HOURS_PRESETS[2].hours)).toEqual(["Every day 24 hours"]);
+    expect(summarizeHours(ALWAYS_OPEN)).toEqual(["Every day 24 hours"]);
     const split = cloneHours(DEFAULT_HOURS);
     split.wed = [{ open: 1320, close: 120 }];
     expect(summarizeHours(split)).toEqual([
@@ -261,21 +257,40 @@ describe("hours helpers", () => {
 
 describe("graph helpers", () => {
   const connections = [
-    { id: "ab", fromId: "a", toId: "b" },
-    { id: "bc", fromId: "b", toId: "c" },
-    { id: "cb", fromId: "c", toId: "b" },
+    { id: "pa", fromId: "p", toId: "a" },
+    { id: "pb", fromId: "p", toId: "b" },
+    { id: "ac", fromId: "a", toId: "c" },
   ];
 
   it("finds connections by direction", () => {
-    expect(findConnection(connections, "a", "b")?.id).toBe("ab");
-    expect(findConnection(connections, "b", "a")).toBeUndefined();
+    expect(findConnection(connections, "p", "a")?.id).toBe("pa");
+    expect(findConnection(connections, "a", "p")).toBeUndefined();
   });
 
   it("lists outgoing, incoming, and total degree", () => {
-    expect(outgoing(connections, "b").map((c) => c.id)).toEqual(["bc"]);
-    expect(incoming(connections, "b").map((c) => c.id)).toEqual(["ab", "cb"]);
-    expect(connectionsOf(connections, "b").map((c) => otherEnd(c, "b"))).toEqual(["a", "c", "c"]);
-    expect(Object.fromEntries(degrees(connections))).toEqual({ a: 1, b: 3, c: 2 });
+    expect(outgoing(connections, "a").map((c) => c.id)).toEqual(["ac"]);
+    expect(incoming(connections, "a").map((c) => c.id)).toEqual(["pa"]);
+    expect(connectionsOf(connections, "a").map((c) => otherEnd(c, "a"))).toEqual(["p", "c"]);
+    expect(Object.fromEntries(degrees(connections))).toEqual({ p: 2, a: 2, b: 1, c: 1 });
+  });
+});
+
+describe("distance", () => {
+  it("measures the straight line between two places", () => {
+    const london = { lat: 51.5074, lng: -0.1278 };
+    const paris = { lat: 48.8566, lng: 2.3522 };
+    expect(distanceKm(london, paris)).toBeCloseTo(343.56, 1);
+    expect(distanceKm(paris, london)).toBeCloseTo(distanceKm(london, paris), 9);
+    expect(distanceKm({ lat: 0, lng: 0 }, { lat: 0, lng: 1 })).toBeCloseTo(111.2, 1);
+    expect(distanceKm(london, london)).toBe(0);
+  });
+
+  it("shows one decimal under 10 km and whole km above", () => {
+    expect(formatDistance(0.04)).toBe("<0.1 km");
+    expect(formatDistance(0.06)).toBe("0.1 km");
+    expect(formatDistance(3.26)).toBe("3.3 km");
+    expect(formatDistance(42.4)).toBe("42 km");
+    expect(formatDistance(1204.6)).toBe("1,205 km");
   });
 });
 
@@ -306,61 +321,37 @@ describe("line geometry", () => {
 
 describe("parseState", () => {
   it("round-trips valid state", () => {
-    const s = withLocations();
+    const s = chain();
     expect(parseState(JSON.parse(JSON.stringify(s)))).toEqual(s);
   });
 
-  it("loads older saved state without connections", () => {
-    const s = withLocations();
-    const { connections: _connections, ...oldState } = s;
-    expect(parseState(oldState)).toEqual(s);
-  });
-
   it("drops malformed records but keeps the rest", () => {
-    const s = withLocations();
+    const s = chain();
     const raw = JSON.parse(JSON.stringify(s));
-    raw.types.push({ id: "bad", name: "Bad", color: "not-a-color" });
-    raw.locations.push({ ...raw.locations[0], id: "orphan", typeId: "missing" });
-    raw.locations.push({ ...raw.locations[0], id: "far", lat: 200 });
-    raw.locations.push(raw.locations[0]); // duplicate id
-    raw.connections = [
-      { id: "valid", fromId: "a", toId: "b" },
-      { id: "self", fromId: "a", toId: "a" },
-      { id: "orphan", fromId: "a", toId: "missing" },
-      { id: "valid", fromId: "b", toId: "c" }, // duplicate id
-      { id: "again", fromId: "a", toId: "b" }, // same direction as "valid"
-    ];
-    expect(parseState(raw)).toEqual({
-      ...s,
-      connections: [{ id: "valid", fromId: "a", toId: "b" }],
-    });
+    const [port, , , clinic] = raw.locations;
+    raw.locations.push({ ...clinic, id: "factory", kind: "factory" });
+    raw.locations.push({ ...port, id: "modeless", portMode: null });
+    raw.locations.push({ ...clinic, id: "no-hours", hours: { mon: "9-5" } });
+    raw.locations.push({ ...clinic, id: "far", lat: 200 });
+    raw.locations.push(clinic); // duplicate id
+    raw.connections.push(
+      { id: "backwards", fromId: "c", toId: "w1" },
+      { id: "skip", fromId: "p", toId: "c" },
+      { id: "orphan", fromId: "p", toId: "missing" },
+      { id: "pw", fromId: "p", toId: "w2" }, // duplicate id
+      { id: "again", fromId: "p", toId: "w1" }, // same link as "pw"
+    );
+    expect(parseState(raw)).toEqual(s);
   });
 
-  it("keeps both directions of a pair", () => {
-    const raw = JSON.parse(JSON.stringify(withLocations()));
-    raw.connections = [
-      { id: "ab", fromId: "a", toId: "b" },
-      { id: "ba", fromId: "b", toId: "a" },
-    ];
-    expect(parseState(raw)?.connections.map((c) => c.id)).toEqual(["ab", "ba"]);
-  });
-
-  it("reads the short-lived undirected { aId, bId } format as aId → bId", () => {
-    const raw = JSON.parse(JSON.stringify(withLocations()));
-    raw.connections = [{ id: "x", aId: "b", bId: "c" }];
-    expect(parseState(raw)?.connections).toEqual([{ id: "x", fromId: "b", toId: "c" }]);
-  });
-
-  it("loads locations saved before working hours existed with hours not set", () => {
-    const raw = JSON.parse(JSON.stringify(withLocations()));
-    delete raw.locations[0].hours;
-    raw.locations[1].hours = { mon: "garbage" };
-    const parsed = parseState(raw)!;
-    expect(parsed.locations.map((l) => l.hours === null)).toEqual([true, true, false]);
+  it("always loads ports as open 24/7", () => {
+    const raw = JSON.parse(JSON.stringify(network()));
+    raw.locations[0].hours = DEFAULT_HOURS;
+    expect(parseState(raw)?.locations[0]?.hours).toEqual(ALWAYS_OPEN);
   });
 
   it("returns null for things that aren't demo state", () => {
     expect(parseState(null)).toBeNull();
-    expect(parseState({ types: "nope", locations: [] })).toBeNull();
+    expect(parseState({ locations: "nope" })).toBeNull();
   });
 });

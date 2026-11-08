@@ -7,7 +7,7 @@
   {
     "featureType": "administrative",
     "elementType": "geometry.stroke",
-    "stylers": [{ "color": "#ce6c54" }, { "weight": 0.6 }]
+    "stylers": [{ "color": "#4dd0b7" }, { "weight": 0.6 }]
   },
   {
     "featureType": "administrative.country",
@@ -53,12 +53,12 @@
   {
     "featureType": "road.highway",
     "elementType": "geometry.fill",
-    "stylers": [{ "color": "#4a2a22" }]
+    "stylers": [{ "color": "#0b3533" }]
   },
   {
     "featureType": "road.highway",
     "elementType": "labels.text.fill",
-    "stylers": [{ "color": "#ce6c54" }]
+    "stylers": [{ "color": "#4dd0b7" }]
   },
   { "featureType": "road.local", "elementType": "labels", "stylers": [{ "visibility": "off" }] },
 

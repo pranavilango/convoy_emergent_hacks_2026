@@ -2,34 +2,40 @@
 
 import { useState, type FormEvent } from "react";
 
-import { cloneHours, DEFAULT_HOURS, hoursError, type WeeklyHours } from "@/lib/demo/hours";
+import {
+  ALWAYS_OPEN,
+  cloneHours,
+  DEFAULT_HOURS,
+  hoursError,
+  type WeeklyHours,
+} from "@/lib/demo/hours";
+import type { LocationKind, PortMode } from "@/lib/demo/kinds";
 import { MAX_LOCATION_NAME_LENGTH } from "@/lib/demo/reducer";
 import { demoActions } from "@/lib/demo/store";
-import type { LocationType } from "@/lib/demo/types";
 
-import { Button, FieldLabel, SectionLabel, TextInput } from "./controls";
+import { Button, FieldLabel, SectionLabel, Segmented, TextInput } from "./controls";
 import { HoursEditor } from "./hours-editor";
+import { KIND_OPTIONS, PORT_MODE_OPTIONS } from "./location-kinds";
 import { PlaceSearch, type PickedPlace } from "./place-search";
 import { Select } from "./select";
 
 export function AddLocationForm({
-  types,
   searchAvailable,
   onAdded,
 }: {
-  types: LocationType[];
   /** False when Google Maps isn't configured or failed to load. */
   searchAvailable: boolean;
   onAdded: (id: string) => void;
 }) {
   const [picked, setPicked] = useState<PickedPlace | null>(null);
   const [name, setName] = useState("");
-  // Remember the last type used: people tend to add several of the same kind in a row.
-  const [chosenTypeId, setChosenTypeId] = useState<string | undefined>(undefined);
-  const typeId = types.some((t) => t.id === chosenTypeId) ? chosenTypeId : types[0]?.id;
-  // Also kept between additions: a business's sites often share the same hours.
+  // Kind, port mode, and hours are kept between additions: people tend to add several clinics
+  // in a row, and sites of one kind often share hours.
+  const [kind, setKind] = useState<LocationKind>("port");
+  const [portMode, setPortMode] = useState<PortMode>("sea");
   const [hours, setHours] = useState<WeeklyHours>(() => cloneHours(DEFAULT_HOURS));
-  const hoursProblem = hoursError(hours);
+  const isPort = kind === "port";
+  const hoursProblem = isPort ? null : hoursError(hours);
 
   function onPick(place: PickedPlace) {
     setPicked(place);
@@ -43,15 +49,16 @@ export function AddLocationForm({
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (!picked || !typeId || hoursProblem) return;
+    if (!picked || hoursProblem) return;
     const id = demoActions.addLocation({
       name: name.trim() || picked.name,
       address: picked.address,
       placeId: picked.placeId,
       lat: picked.lat,
       lng: picked.lng,
-      typeId,
-      hours,
+      kind,
+      portMode: isPort ? portMode : null,
+      hours: isPort ? ALWAYS_OPEN : hours,
     });
     reset();
     onAdded(id);
@@ -100,29 +107,38 @@ export function AddLocationForm({
             />
           </div>
 
-          {types.length > 0 ? (
-            <Select
-              label="Type"
-              value={typeId}
-              onChange={setChosenTypeId}
-              options={types.map((t) => ({ value: t.id, label: t.name, color: t.color }))}
-            />
+          <Select
+            label="Type"
+            value={kind}
+            onChange={(v) => setKind(v as LocationKind)}
+            options={KIND_OPTIONS}
+          />
+
+          {isPort ? (
+            <div className="space-y-2">
+              <span className="block font-mono text-[11px] uppercase tracking-wider opacity-70">
+                Port
+              </span>
+              <Segmented
+                label="Port"
+                value={portMode}
+                options={PORT_MODE_OPTIONS}
+                onChange={setPortMode}
+              />
+              <p className="text-sm opacity-80">
+                Ports are open 24/7, so they have no hours to set.
+              </p>
+            </div>
           ) : (
-            <p className="text-sm">Create a location type below first.</p>
+            <fieldset className="space-y-2">
+              <legend className="mb-2 font-mono text-[11px] uppercase tracking-wider opacity-70">
+                Working hours
+              </legend>
+              <HoursEditor value={hours} onChange={setHours} />
+            </fieldset>
           )}
 
-          <fieldset className="space-y-2">
-            <legend className="mb-2 font-mono text-[11px] uppercase tracking-wider opacity-70">
-              Working hours
-            </legend>
-            <HoursEditor value={hours} onChange={setHours} />
-          </fieldset>
-
-          <Button
-            type="submit"
-            className="w-full justify-between"
-            disabled={!typeId || !!hoursProblem}
-          >
+          <Button type="submit" className="w-full justify-between" disabled={!!hoursProblem}>
             Add to map <span aria-hidden>↘</span>
           </Button>
         </form>

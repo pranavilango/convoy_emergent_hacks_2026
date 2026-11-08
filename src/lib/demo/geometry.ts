@@ -6,6 +6,28 @@
 type LatLng = { lat: number; lng: number };
 type Point = { x: number; y: number };
 
+/** Mean Earth radius in km. */
+const EARTH_RADIUS_KM = 6371.0088;
+
+/** Straight-line (great-circle) distance between two points, in km. */
+export function distanceKm(a: LatLng, b: LatLng): number {
+  const rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad;
+  const dLng = (b.lng - a.lng) * rad;
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) ** 2;
+  return 2 * EARTH_RADIUS_KM * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+/** "<0.1 km", "0.8 km" under 10 km, then whole km with thousands separators ("42 km",
+ *  "1,204 km"). */
+export function formatDistance(km: number): string {
+  if (km < 0.05) return "<0.1 km";
+  if (km < 10) return `${(Math.round(km * 10) / 10).toFixed(1)} km`;
+  return `${Math.round(km).toLocaleString("en-US")} km`;
+}
+
 /** Size of the Mercator world at zoom 0, in pixels (Google's convention). */
 const TILE = 256;
 

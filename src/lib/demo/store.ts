@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react";
 
 import type { WeeklyHours } from "./hours";
+import type { LocationKind, PortMode } from "./kinds";
 import { INITIAL_STATE, parseState, reducer, type DemoAction } from "./reducer";
 import type { DemoState, NewLocation } from "./types";
 
@@ -11,15 +12,19 @@ import type { DemoState, NewLocation } from "./types";
  * goes through this module, so moving to a real backend later only means changing this file.
  */
 
-export const STORAGE_KEY = "convoy.demo.v1";
+export const STORAGE_KEY = "convoy.demo.v2";
+/** Data from before Convoy's medical supply network (factories, retail stores…). It doesn't map
+ *  onto ports, warehouses, and clinics, so it's discarded rather than converted. */
+const LEGACY_STORAGE_KEYS = ["convoy.demo.v1"];
 
-type Saved = { version: 1; state: DemoState };
+type Saved = { version: 2; state: DemoState };
 
 let state: DemoState | null = null;
 const listeners = new Set<() => void>();
 
 function readStorage(): DemoState {
   try {
+    for (const key of LEGACY_STORAGE_KEYS) window.localStorage.removeItem(key);
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (raw === null) return INITIAL_STATE;
     const saved: unknown = JSON.parse(raw);
@@ -36,7 +41,7 @@ function readStorage(): DemoState {
 
 function writeStorage(next: DemoState) {
   try {
-    const saved: Saved = { version: 1, state: next };
+    const saved: Saved = { version: 2, state: next };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
   } catch {
     // Quota exceeded or storage blocked: keep working in memory for this session.
@@ -90,24 +95,6 @@ function newId(): string {
 }
 
 export const demoActions = {
-  addType(name: string, color: string): string {
-    const id = newId();
-    dispatch({ type: "addType", id, name, color });
-    return id;
-  },
-  renameType(id: string, name: string) {
-    dispatch({ type: "updateType", id, name });
-  },
-  recolorType(id: string, color: string) {
-    dispatch({ type: "updateType", id, color });
-  },
-  removeType(id: string, reassignTo?: string) {
-    dispatch(
-      reassignTo === undefined
-        ? { type: "removeType", id }
-        : { type: "removeType", id, reassignTo },
-    );
-  },
   addLocation(location: NewLocation): string {
     const id = newId();
     dispatch({ type: "addLocation", id, createdAt: new Date().toISOString(), location });
@@ -116,8 +103,12 @@ export const demoActions = {
   renameLocation(id: string, name: string) {
     dispatch({ type: "updateLocation", id, name });
   },
-  setLocationType(id: string, typeId: string) {
-    dispatch({ type: "updateLocation", id, typeId });
+  /** Also removes connections the new kind can't have (see `connectionsBrokenByKind`). */
+  setLocationKind(id: string, kind: LocationKind) {
+    dispatch({ type: "updateLocation", id, kind });
+  },
+  setPortMode(id: string, portMode: PortMode) {
+    dispatch({ type: "updateLocation", id, portMode });
   },
   setLocationHours(id: string, hours: WeeklyHours) {
     dispatch({ type: "updateLocation", id, hours });
@@ -125,7 +116,8 @@ export const demoActions = {
   removeLocation(id: string) {
     dispatch({ type: "removeLocation", id });
   },
-  /** Add a directed connection fromId → toId. No-op if it already exists. */
+  /** Add a supply link fromId → toId (port → warehouse or warehouse → clinic). No-op if it
+   *  already exists or breaks the chain. */
   connectLocations(fromId: string, toId: string): string {
     const id = newId();
     dispatch({ type: "addConnection", id, fromId, toId });

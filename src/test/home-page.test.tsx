@@ -11,15 +11,16 @@ describe("Home page", () => {
     for (const id of ["problem", "solution", "how"]) {
       expect(document.getElementById(id)).not.toBeNull();
     }
-    for (const input of ["Locations", "Working hours", "Order sizes", "Vehicles"]) {
+    for (const input of ["Ports", "Warehouses", "Clinics", "Working hours"]) {
       expect(screen.getAllByText(input).length).toBeGreaterThan(0);
     }
-    expect(
-      screen.getByAltText("City lights connected by glowing delivery routes"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Power Planner")).toBeInTheDocument();
+    expect(screen.getByAltText(/^Earth at night/)).toBeInTheDocument();
   });
 
   it("sets its own title rather than inheriting the layout default", () => {
-    expect(metadata.title).toEqual({ absolute: "Convoy — Growth planner for small businesses" });
+    expect(metadata.title).toEqual({
+      absolute: "Convoy — Solar power planner for medical supply networks",
+    });
   });
 });

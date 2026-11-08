@@ -5,12 +5,13 @@ import Link from "next/link";
 import earth from "@/assets/earth-network.jpg";
 
 export const metadata: Metadata = {
-  title: { absolute: "Convoy — Growth planner for small businesses" },
+  title: { absolute: "Convoy — Solar power planner for medical supply networks" },
   description:
-    "A preconfigured linear-time logistics analysis platform for SMEs to optimize scaling.",
+    "Convoy allocates solar power across medical warehouses and clinics in low-resource regions.",
   openGraph: {
-    title: "Convoy — Growth planner for small businesses",
-    description: "Upload your network. Convoy tells you the highest-impact changes to make next.",
+    title: "Convoy — Solar power planner for medical supply networks",
+    description:
+      "Map your ports, warehouses, and clinics. Convoy tells you where solar power protects the most care.",
     type: "website",
   },
   twitter: {
@@ -18,19 +19,19 @@ export const metadata: Metadata = {
   },
 };
 
-const outputs = ["New store", "Delivery zone", "Working hours", "Fleet size", "Order routing"];
+const outputs = ["Solar priority", "Panel sizing", "Battery backup", "Cold chain", "Grid gaps"];
 
 const inputs = [
-  ["01", "Locations", "Stores, kitchens, depots."],
-  ["02", "Working hours", "When each site and driver is on."],
-  ["03", "Order sizes", "What customers buy, and where."],
-  ["04", "Vehicles", "Bikes, vans, capacity, cost."],
+  ["01", "Ports", "Air and sea entry points for supplies."],
+  ["02", "Warehouses", "Where medicines are stored and kept cold."],
+  ["03", "Clinics", "Where patients are treated."],
+  ["04", "Working hours", "When each site is staffed and needs power."],
 ] as const;
 
 const problems = [
-  ["Technical", "Existing tools assume you have an operations research team."],
-  ["Expensive", "Enterprise pricing built for enterprise fleets."],
-  ["Not actionable", "Dashboards full of numbers — no clear next step."],
+  ["Unreliable grid", "Outages spoil vaccines and insulin, and stop care after dark."],
+  ["Scarce funding", "Budgets cover a few solar systems, never one for every site."],
+  ["No clear priority", "Panels go to whoever asks first, not where they protect the most care."],
 ] as const;
 
 function Arrow() {
@@ -63,8 +64,7 @@ export default function Home() {
       <section className="px-6 pb-12 pt-4 md:px-10">
         <div className="flex justify-between font-mono text-[11px] uppercase tracking-wider">
           <span>_01</span>
-          <span>Hackathon ©2026</span>
-          <span>Built for SMEs</span>
+          <span>Built for last-mile health</span>
         </div>
 
         <div className="mt-16 grid grid-cols-1 items-end gap-8 md:grid-cols-[1fr_auto]">
@@ -83,7 +83,8 @@ export default function Home() {
         <div className="mt-6 grid grid-cols-1 items-end gap-8 md:grid-cols-[18rem_1fr]">
           <div className="text-sm">
             <p className="max-w-xs">
-              A preconfigured linear-time logistics analysis platform for SMEs to optimize scaling.
+              A solar power allocation planner for medical warehouses and clinics in low-resource
+              regions.
             </p>
             <a
               href="#solution"
@@ -93,7 +94,7 @@ export default function Home() {
             </a>
           </div>
           <p className="text-5xl font-normal leading-[0.9] tracking-[-0.05em] md:text-right md:text-[7.5vw]">
-            Growth Planner
+            Power Planner
           </p>
         </div>
       </section>
@@ -102,7 +103,7 @@ export default function Home() {
       <section className="relative bg-ink text-ink-foreground">
         <Image
           src={earth}
-          alt="City lights connected by glowing delivery routes"
+          alt="Earth at night, with lit cities linked by glowing lines and dark regions between them"
           sizes="100vw"
           preload
           placeholder="blur"
@@ -110,7 +111,7 @@ export default function Home() {
         />
         <div className="absolute inset-x-0 bottom-0 flex justify-between px-6 py-6 font-mono text-[11px] uppercase tracking-wider md:px-10">
           <span>_02 Your network, mapped</span>
-          <span>Linear-time analysis</span>
+          <span>Port → Warehouse → Clinic</span>
         </div>
       </section>
 
@@ -120,8 +121,8 @@ export default function Home() {
           _03 The problem
         </div>
         <p className="mt-10 max-w-6xl text-4xl leading-[1.05] tracking-[-0.04em] md:text-7xl">
-          You&apos;re a local bakery. You want to deliver cupcakes to more people.{" "}
-          <span className="text-background">Every resource counts.</span>
+          You run a rural clinic. Your vaccine fridge runs on a grid that keeps cutting out.{" "}
+          <span className="text-background">Every kilowatt counts.</span>
         </p>
         <div className="mt-20 grid gap-10 border-t border-ink-foreground/20 pt-10 md:grid-cols-3">
           {problems.map(([t, d]) => (
@@ -137,18 +138,19 @@ export default function Home() {
       <section id="solution" className="px-6 py-28 md:px-10">
         <div className="font-mono text-[11px] uppercase tracking-wider">_04 The solution</div>
         <h2 className="mt-10 max-w-6xl text-4xl leading-[1.05] tracking-[-0.04em] md:text-7xl">
-          Convoy is a growth planner built specifically for small businesses.
+          Convoy decides where solar power does the most good across your medical supply network.
         </h2>
         <p className="mt-8 max-w-xl text-lg">
-          It tells you which practical changes will yield the highest impact — where to open a new
-          store, which neighbourhood to expand delivery to, and your optimal working hours.
+          Map your ports, warehouses, and clinics. Convoy weighs how supplies flow between them, how
+          far they travel, and when each site needs power, then tells you which sites to equip first
+          and what to give them: panels, batteries, and backup hours.
         </p>
       </section>
 
       {/* How */}
       <section id="how" className="border-t border-foreground/30 px-6 py-28 md:px-10">
         <div className="flex justify-between font-mono text-[11px] uppercase tracking-wider">
-          <span>_05 Upload your network</span>
+          <span>_05 Map your network</span>
           <span>4 inputs → 1 plan</span>
         </div>
         <div className="mt-12 divide-y divide-foreground/30 border-y border-foreground/30">
@@ -167,10 +169,10 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="bg-ink px-6 py-16 text-ink-foreground md:px-10">
-        <p className="text-[18vw] leading-[0.8] tracking-[-0.07em]">Scale smart.</p>
+        <p className="text-[18vw] leading-[0.8] tracking-[-0.07em]">Power care.</p>
         <div className="mt-10 flex justify-between font-mono text-[11px] uppercase tracking-wider opacity-70">
           <span>Convoy</span>
-          <span>Hackathon project ©2026</span>
+          <span>Emergent Hacks ©2026</span>
         </div>
       </footer>
     </main>

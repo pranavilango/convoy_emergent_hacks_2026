@@ -1,28 +1,29 @@
-import { isTypeColor } from "./colors";
 import { findConnection, involves } from "./graph";
-import { cloneHours, hoursError, parseHours, type WeeklyHours } from "./hours";
-import type { Connection, DemoState, Location, LocationType, NewLocation } from "./types";
+import { ALWAYS_OPEN, cloneHours, DEFAULT_HOURS, hoursError, parseHours } from "./hours";
+import type { WeeklyHours } from "./hours";
+import { canSupply, isLocationKind, isPortMode, type LocationKind, type PortMode } from "./kinds";
+import type { Connection, DemoState, Location, NewLocation } from "./types";
 
-export const DEFAULT_TYPES: LocationType[] = [
-  { id: "factory", name: "Factory", color: "#f2b33d" },
-  { id: "warehouse", name: "Warehouse", color: "#5cc8ff" },
-  { id: "retail-store", name: "Retail store", color: "#4fd1a5" },
-];
+export const INITIAL_STATE: DemoState = { locations: [], connections: [] };
 
-export const INITIAL_STATE: DemoState = { types: DEFAULT_TYPES, locations: [], connections: [] };
-
-export const MAX_TYPE_NAME_LENGTH = 32;
 export const MAX_LOCATION_NAME_LENGTH = 80;
 
 export type DemoAction =
-  | { type: "addType"; id: string; name: string; color: string }
-  | { type: "updateType"; id: string; name?: string; color?: string }
-  /** Locations of the removed type are moved to `reassignTo`, or deleted when it is omitted. */
-  | { type: "removeType"; id: string; reassignTo?: string }
   | { type: "addLocation"; id: string; createdAt: string; location: NewLocation }
-  | { type: "updateLocation"; id: string; name?: string; typeId?: string; hours?: WeeklyHours }
+  | {
+      type: "updateLocation";
+      id: string;
+      name?: string;
+      /** Changing kind removes connections the new kind can't have, and resets the hours and
+       *  port mode to fit it (ports: 24/7 and `portMode`, default sea; others: `hours`, default
+       *  weekdays 9–5). */
+      kind?: LocationKind;
+      portMode?: PortMode;
+      /** Ignored for ports, which are always open. */
+      hours?: WeeklyHours;
+    }
   | { type: "removeLocation"; id: string }
-  /** Directed. A duplicate of an existing fromId → toId is ignored; the reverse is allowed. */
+  /** Only port → warehouse and warehouse → clinic. Duplicates are ignored. */
   | { type: "addConnection"; id: string; fromId: string; toId: string }
   | { type: "removeConnection"; id: string }
   | { type: "replace"; state: DemoState };
@@ -31,88 +32,46 @@ export function normalizeName(name: string, max: number): string {
   return name.trim().replace(/\s+/g, " ").slice(0, max);
 }
 
-function typeNameTaken(types: LocationType[], name: string, exceptId?: string): boolean {
-  const key = name.toLowerCase();
-  return types.some((t) => t.id !== exceptId && t.name.toLowerCase() === key);
-}
-
-/** Why a proposed type name can't be used, or null if it's fine. */
-export function typeNameError(
-  types: LocationType[],
-  rawName: string,
-  exceptId?: string,
-): string | null {
-  const name = normalizeName(rawName, MAX_TYPE_NAME_LENGTH);
-  if (!name) return "Give the type a name.";
-  if (typeNameTaken(types, name, exceptId)) return `“${name}” already exists.`;
-  return null;
+/** Connections of `locationId` that wouldn't be allowed if it became `kind`. */
+export function connectionsBrokenByKind(
+  state: DemoState,
+  locationId: string,
+  kind: LocationKind,
+): Connection[] {
+  const kindOf = (id: string) =>
+    id === locationId ? kind : state.locations.find((l) => l.id === id)?.kind;
+  return state.connections.filter((c) => {
+    if (!involves(c, locationId)) return false;
+    const from = kindOf(c.fromId);
+    const to = kindOf(c.toId);
+    return !from || !to || !canSupply(from, to);
+  });
 }
 
 /**
- * Pure state transitions. Invalid actions (unknown ids, empty or duplicate names, bad colors)
- * return the state unchanged, so the UI can't put the store into an inconsistent shape.
+ * Pure state transitions. Invalid actions (unknown ids, empty names, bad hours, connections that
+ * break the port → warehouse → clinic chain) return the state unchanged, so the UI can't put the
+ * store into an inconsistent shape.
  */
 export function reducer(state: DemoState, action: DemoAction): DemoState {
   switch (action.type) {
-    case "addType": {
-      const name = normalizeName(action.name, MAX_TYPE_NAME_LENGTH);
-      if (!name || typeNameTaken(state.types, name) || !isTypeColor(action.color)) return state;
-      if (state.types.some((t) => t.id === action.id)) return state;
-      return { ...state, types: [...state.types, { id: action.id, name, color: action.color }] };
-    }
-
-    case "updateType": {
-      const current = state.types.find((t) => t.id === action.id);
-      if (!current) return state;
-      const next = { ...current };
-      if (action.name !== undefined) {
-        const name = normalizeName(action.name, MAX_TYPE_NAME_LENGTH);
-        if (!name || typeNameTaken(state.types, name, action.id)) return state;
-        next.name = name;
-      }
-      if (action.color !== undefined) {
-        if (!isTypeColor(action.color)) return state;
-        next.color = action.color;
-      }
-      return { ...state, types: state.types.map((t) => (t.id === action.id ? next : t)) };
-    }
-
-    case "removeType": {
-      if (!state.types.some((t) => t.id === action.id)) return state;
-      const { reassignTo } = action;
-      if (
-        reassignTo !== undefined &&
-        (reassignTo === action.id || !state.types.some((t) => t.id === reassignTo))
-      ) {
-        return state;
-      }
-      const types = state.types.filter((t) => t.id !== action.id);
-      const locations =
-        reassignTo === undefined
-          ? state.locations.filter((l) => l.typeId !== action.id)
-          : state.locations.map((l) => (l.typeId === action.id ? { ...l, typeId: reassignTo } : l));
-      const locationIds = new Set(locations.map((location) => location.id));
-      const connections =
-        locations.length === state.locations.length
-          ? state.connections
-          : state.connections.filter((c) => locationIds.has(c.fromId) && locationIds.has(c.toId));
-      return { ...state, types, locations, connections };
-    }
-
     case "addLocation": {
       const { location } = action;
-      if (!state.types.some((t) => t.id === location.typeId)) return state;
+      if (!isLocationKind(location.kind)) return state;
       if (!Number.isFinite(location.lat) || !Number.isFinite(location.lng)) return state;
       if (state.locations.some((l) => l.id === action.id)) return state;
       const name =
         normalizeName(location.name, MAX_LOCATION_NAME_LENGTH) ||
         normalizeName(location.address, MAX_LOCATION_NAME_LENGTH);
       if (!name) return state;
-      if (hoursError(location.hours)) return state;
+      const isPort = location.kind === "port";
+      if (isPort && !isPortMode(location.portMode)) return state;
+      if (!isPort && hoursError(location.hours)) return state;
       const added: Location = {
         ...location,
         name,
-        hours: cloneHours(location.hours),
+        portMode: isPort ? location.portMode : null,
+        hours: cloneHours(isPort ? ALWAYS_OPEN : location.hours),
         id: action.id,
         createdAt: action.createdAt,
       };
@@ -128,15 +87,34 @@ export function reducer(state: DemoState, action: DemoAction): DemoState {
         if (!name) return state;
         next.name = name;
       }
-      if (action.typeId !== undefined) {
-        if (!state.types.some((t) => t.id === action.typeId)) return state;
-        next.typeId = action.typeId;
+      const kindChanged = action.kind !== undefined && action.kind !== current.kind;
+      if (action.kind !== undefined) {
+        if (!isLocationKind(action.kind)) return state;
+        next.kind = action.kind;
       }
-      if (action.hours !== undefined) {
-        if (hoursError(action.hours)) return state;
-        next.hours = cloneHours(action.hours);
+      if (action.portMode !== undefined && !isPortMode(action.portMode)) return state;
+      if (action.hours !== undefined && hoursError(action.hours)) return state;
+
+      if (next.kind === "port") {
+        if (action.hours !== undefined) return state;
+        next.portMode = action.portMode ?? current.portMode ?? "sea";
+        next.hours = cloneHours(ALWAYS_OPEN);
+      } else {
+        if (action.portMode !== undefined) return state;
+        next.portMode = null;
+        if (action.hours !== undefined) next.hours = cloneHours(action.hours);
+        else if (kindChanged && current.kind === "port") next.hours = cloneHours(DEFAULT_HOURS);
       }
-      return { ...state, locations: state.locations.map((l) => (l.id === action.id ? next : l)) };
+
+      const locations = state.locations.map((l) => (l.id === action.id ? next : l));
+      if (!kindChanged) return { ...state, locations };
+      const broken = new Set(connectionsBrokenByKind(state, action.id, next.kind).map((c) => c.id));
+      return {
+        locations,
+        connections: broken.size
+          ? state.connections.filter((c) => !broken.has(c.id))
+          : state.connections,
+      };
     }
 
     case "removeLocation": {
@@ -150,13 +128,10 @@ export function reducer(state: DemoState, action: DemoAction): DemoState {
 
     case "addConnection": {
       const { fromId, toId } = action;
-      if (fromId === toId || state.connections.some((c) => c.id === action.id)) return state;
-      if (
-        !state.locations.some((l) => l.id === fromId) ||
-        !state.locations.some((l) => l.id === toId)
-      ) {
-        return state;
-      }
+      if (state.connections.some((c) => c.id === action.id)) return state;
+      const from = state.locations.find((l) => l.id === fromId);
+      const to = state.locations.find((l) => l.id === toId);
+      if (!from || !to || !canSupply(from.kind, to.kind)) return state;
       if (findConnection(state.connections, fromId, toId)) return state;
       const connection: Connection = { id: action.id, fromId, toId };
       return { ...state, connections: [...state.connections, connection] };
@@ -178,23 +153,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function parseType(value: unknown): LocationType | null {
+function parseLocation(value: unknown): Location | null {
   if (!isRecord(value)) return null;
-  const { id, name, color } = value;
-  if (typeof id !== "string" || !id || typeof name !== "string" || !name.trim()) return null;
-  if (!isTypeColor(color)) return null;
-  return { id, name: normalizeName(name, MAX_TYPE_NAME_LENGTH), color };
-}
-
-function parseLocation(value: unknown, typeIds: Set<string>): Location | null {
-  if (!isRecord(value)) return null;
-  const { id, name, address, placeId, lat, lng, typeId, createdAt, hours } = value;
+  const { id, name, address, placeId, lat, lng, kind, portMode, createdAt } = value;
   if (typeof id !== "string" || !id) return null;
   if (typeof name !== "string" || !name.trim() || typeof address !== "string") return null;
   if (typeof lat !== "number" || !Number.isFinite(lat) || Math.abs(lat) > 90) return null;
   if (typeof lng !== "number" || !Number.isFinite(lng) || Math.abs(lng) > 180) return null;
-  if (typeof typeId !== "string" || !typeIds.has(typeId)) return null;
-  if (typeof createdAt !== "string") return null;
+  if (!isLocationKind(kind) || typeof createdAt !== "string") return null;
+  const isPort = kind === "port";
+  const mode = isPort && isPortMode(portMode) ? portMode : null;
+  if (isPort && !mode) return null;
+  const hours = isPort ? cloneHours(ALWAYS_OPEN) : parseHours(value["hours"]);
+  if (!hours) return null;
   return {
     id,
     name: normalizeName(name, MAX_LOCATION_NAME_LENGTH),
@@ -202,51 +173,38 @@ function parseLocation(value: unknown, typeIds: Set<string>): Location | null {
     ...(typeof placeId === "string" && placeId ? { placeId } : {}),
     lat,
     lng,
-    typeId,
-    // Locations saved before working hours existed (or with malformed hours) load as "not set".
-    hours: parseHours(hours),
+    kind,
+    portMode: mode,
+    hours,
     createdAt,
   };
 }
 
-function parseConnection(value: unknown, locationIds: Set<string>): Connection | null {
+function parseConnection(value: unknown, kindById: Map<string, LocationKind>): Connection | null {
   if (!isRecord(value)) return null;
-  const { id } = value;
-  // A short-lived build stored undirected { aId, bId }; read those as aId → bId.
-  const fromId = value["fromId"] ?? value["aId"];
-  const toId = value["toId"] ?? value["bId"];
+  const { id, fromId, toId } = value;
   if (typeof id !== "string" || !id || typeof fromId !== "string" || typeof toId !== "string") {
     return null;
   }
-  if (fromId === toId || !locationIds.has(fromId) || !locationIds.has(toId)) return null;
+  const from = kindById.get(fromId);
+  const to = kindById.get(toId);
+  if (!from || !to || !canSupply(from, to)) return null;
   return { id, fromId, toId };
 }
 
 /**
- * Validates state read from storage. Drops anything malformed rather than failing outright, so
- * one bad record (or a hand-edited value) doesn't wipe the user's other locations.
+ * Validates state read from storage. Drops anything malformed (or any connection that breaks the
+ * supply chain) rather than failing outright, so one bad record doesn't wipe everything else.
  * Returns null when there's nothing usable at all.
  */
 export function parseState(value: unknown): DemoState | null {
-  if (!isRecord(value) || !Array.isArray(value["types"]) || !Array.isArray(value["locations"])) {
-    return null;
-  }
-  const types: LocationType[] = [];
-  const seenTypeIds = new Set<string>();
-  const seenTypeNames = new Set<string>();
-  for (const raw of value["types"]) {
-    const t = parseType(raw);
-    if (!t || seenTypeIds.has(t.id) || seenTypeNames.has(t.name.toLowerCase())) continue;
-    seenTypeIds.add(t.id);
-    seenTypeNames.add(t.name.toLowerCase());
-    types.push(t);
-  }
+  if (!isRecord(value) || !Array.isArray(value["locations"])) return null;
   const locations: Location[] = [];
-  const seenLocationIds = new Set<string>();
+  const kindById = new Map<string, LocationKind>();
   for (const raw of value["locations"]) {
-    const l = parseLocation(raw, seenTypeIds);
-    if (!l || seenLocationIds.has(l.id)) continue;
-    seenLocationIds.add(l.id);
+    const l = parseLocation(raw);
+    if (!l || kindById.has(l.id)) continue;
+    kindById.set(l.id, l.kind);
     locations.push(l);
   }
   const rawConnections = value["connections"];
@@ -255,7 +213,7 @@ export function parseState(value: unknown): DemoState | null {
   const seenPairs = new Set<string>();
   if (Array.isArray(rawConnections)) {
     for (const raw of rawConnections) {
-      const connection = parseConnection(raw, seenLocationIds);
+      const connection = parseConnection(raw, kindById);
       if (!connection || seenConnectionIds.has(connection.id)) continue;
       const pair = JSON.stringify([connection.fromId, connection.toId]);
       if (seenPairs.has(pair)) continue;
@@ -264,5 +222,5 @@ export function parseState(value: unknown): DemoState | null {
       connections.push(connection);
     }
   }
-  return { types, locations, connections };
+  return { locations, connections };
 }

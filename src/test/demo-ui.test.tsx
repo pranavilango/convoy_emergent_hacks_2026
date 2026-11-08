@@ -6,6 +6,7 @@ import { DemoApp } from "@/components/demo/demo-app";
 import { Select } from "@/components/demo/select";
 import { HoursEditor } from "@/components/demo/hours-editor";
 import { cloneHours, DEFAULT_HOURS, type WeeklyHours } from "@/lib/demo/hours";
+import type { LocationKind } from "@/lib/demo/kinds";
 import { __resetDemoStore, demoActions, STORAGE_KEY, useDemoState } from "@/lib/demo/store";
 
 // The Maps SDK can't run in jsdom. These tests cover the no-key path and pure UI; the map itself
@@ -29,29 +30,56 @@ function openLocation(name: string) {
   fireEvent.click(within(list).getByRole("button", { name: new RegExp(`^${name}`) }));
 }
 
-function addLocation(typeId: string, name: string) {
+function pick(label: string, option: string) {
+  fireEvent.click(screen.getByRole("combobox", { name: label }));
+  fireEvent.click(screen.getByRole("option", { name: new RegExp(option) }));
+}
+
+let nextLng = 39;
+function addLocation(kind: LocationKind, name: string) {
+  // Spread sites out so distances aren't zero.
+  nextLng += 0.5;
   return demoActions.addLocation({
     name,
     address: `${name} address`,
-    lat: 1,
-    lng: 2,
-    typeId,
+    lat: -6.8,
+    lng: nextLng,
+    kind,
+    portMode: kind === "port" ? "sea" : null,
     hours: cloneHours(DEFAULT_HOURS),
   });
+}
+
+/** Port → Warehouse → Clinic. */
+function addChain() {
+  const p = addLocation("port", "Dar Port");
+  const w = addLocation("warehouse", "Central Store");
+  const c = addLocation("clinic", "Mwanza Clinic");
+  demoActions.connectLocations(p, w);
+  demoActions.connectLocations(w, c);
+  return { p, w, c };
 }
 
 describe("demo store persistence", () => {
   it("saves to localStorage and loads it back", () => {
     act(() => {
-      addLocation("factory", "Plant");
+      addLocation("clinic", "Mwanza Clinic");
     });
     const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "null");
-    expect(saved.version).toBe(1);
-    expect(saved.state.locations[0].name).toBe("Plant");
+    expect(saved.version).toBe(2);
+    expect(saved.state.locations[0]).toMatchObject({ name: "Mwanza Clinic", kind: "clinic" });
 
     act(() => __resetDemoStore());
     render(<DemoApp />);
-    expect(screen.getByText("Plant")).toBeInTheDocument();
+    expect(screen.getByText("Mwanza Clinic")).toBeInTheDocument();
+  });
+
+  it("discards data saved before the medical supply network", () => {
+    window.localStorage.setItem("convoy.demo.v1", JSON.stringify({ version: 1, state: {} }));
+    act(() => __resetDemoStore());
+    render(<DemoApp />);
+    expect(window.localStorage.getItem("convoy.demo.v1")).toBeNull();
+    expect(screen.getByText(/No locations yet/)).toBeInTheDocument();
   });
 
   it("starts fresh when stored data is corrupt", () => {
@@ -67,8 +95,6 @@ describe("DemoApp without an API key", () => {
     render(<DemoApp />);
     expect(screen.getByText("Google Maps isn't configured")).toBeInTheDocument();
     expect(screen.getByText(/Address search needs Google Maps/)).toBeInTheDocument();
-    // Type management still works without the map.
-    expect(screen.getByRole("button", { name: "Edit Factory" })).toBeInTheDocument();
   });
 
   it("links back to the landing page", () => {
@@ -78,144 +104,157 @@ describe("DemoApp without an API key", () => {
 });
 
 describe("location types", () => {
-  it("creates a type", () => {
-    render(<DemoApp />);
-    fireEvent.click(screen.getByRole("button", { name: "+ New type" }));
-    fireEvent.change(screen.getByLabelText("Type name"), { target: { value: "Dark kitchen" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add type" }));
-    expect(screen.getByRole("button", { name: "Edit Dark kitchen" })).toBeInTheDocument();
-  });
-
-  it("shows an error for a duplicate name and doesn't save", () => {
-    render(<DemoApp />);
-    fireEvent.click(screen.getByRole("button", { name: "+ New type" }));
-    fireEvent.change(screen.getByLabelText("Type name"), { target: { value: "warehouse" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add type" }));
-    expect(screen.getByText(/already exists/)).toBeInTheDocument();
-  });
-
-  it("moves locations to another type when deleting a type in use", () => {
+  it("lists the three fixed types with how many of each are on the map", () => {
     act(() => {
-      addLocation("factory", "Plant A");
-      addLocation("factory", "Plant B");
+      addLocation("clinic", "Clinic A");
+      addLocation("clinic", "Clinic B");
     });
     render(<DemoApp />);
-    fireEvent.click(screen.getByRole("button", { name: "Edit Factory" }));
-    fireEvent.click(screen.getByRole("button", { name: "Delete type" }));
-    expect(screen.getByText(/2 locations use/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Move & delete type" }));
-
-    expect(screen.queryByRole("button", { name: "Edit Factory" })).toBeNull();
-    const list = screen.getByRole("region", { name: /Locations/ });
-    expect(within(list).getAllByText("Warehouse")).toHaveLength(2);
-  });
-
-  it("can delete a type together with its locations", () => {
-    act(() => {
-      addLocation("factory", "Plant A");
-    });
-    render(<DemoApp />);
-    fireEvent.click(screen.getByRole("button", { name: "Edit Factory" }));
-    fireEvent.click(screen.getByRole("button", { name: "Delete type" }));
-    fireEvent.click(screen.getByRole("button", { name: "Delete type + 1" }));
-    expect(screen.queryByText("Plant A")).toBeNull();
+    const key = screen.getByRole("region", { name: /Location types/ });
+    expect(
+      within(key)
+        .getAllByRole("listitem")
+        .map((li) => li.textContent),
+    ).toEqual([
+      expect.stringMatching(/^Port.*Sea 00 · Air 00.*00$/),
+      expect.stringMatching(/^Warehouse.*00$/),
+      expect.stringMatching(/^Clinic.*02$/),
+    ]);
+    // Types are fixed: nothing to create, rename, or delete.
+    expect(within(key).queryByRole("button")).toBeNull();
   });
 });
 
 describe("location list", () => {
-  it("expands a location to change its type, and removes it", () => {
+  it("changes a location's type, and removes it", () => {
     act(() => {
-      addLocation("factory", "Plant A");
+      addLocation("clinic", "Mwanza Clinic");
     });
     render(<DemoApp />);
-    fireEvent.click(screen.getByRole("button", { name: /Plant A/ }));
+    openLocation("Mwanza Clinic");
 
-    fireEvent.click(screen.getByRole("combobox", { name: "Type" }));
-    fireEvent.click(screen.getByRole("option", { name: /Retail store/ }));
-    expect(screen.getByRole("combobox", { name: "Type" })).toHaveTextContent("Retail store");
-    expect(screen.getByRole("button", { name: /Plant A/ })).toHaveTextContent("Retail store");
+    pick("Type", "Warehouse");
+    expect(screen.getByRole("combobox", { name: "Type" })).toHaveTextContent("Warehouse");
+    expect(screen.getByRole("button", { name: /^Mwanza Clinic/ })).toHaveTextContent("Warehouse");
 
     fireEvent.click(screen.getByRole("button", { name: "Remove location" }));
-    expect(screen.queryByText("Plant A")).toBeNull();
+    expect(screen.queryByText("Mwanza Clinic")).toBeNull();
+  });
+
+  it("shows ports as always open and switches them between sea and air", () => {
+    act(() => {
+      addLocation("port", "Dar Port");
+    });
+    render(<DemoApp />);
+    openLocation("Dar Port");
+
+    expect(screen.getByText("Open 24/7. Ports never close.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Sea" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Air" }));
+    expect(screen.getByRole("button", { name: "Air" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /^Dar Port/ })).toHaveTextContent("Port · Air");
+  });
+
+  it("asks before a type change that would remove connections", () => {
+    act(() => {
+      addChain();
+    });
+    render(<DemoApp />);
+    openLocation("Central Store");
+
+    pick("Type", "Clinic");
+    expect(screen.getByRole("alert")).toHaveTextContent(/can't keep these 2 connections/);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("combobox", { name: "Type" })).toHaveTextContent("Warehouse");
+    expect(screen.getAllByRole("button", { name: /^Remove connection from/ })).toHaveLength(2);
+
+    pick("Type", "Clinic");
+    fireEvent.click(screen.getByRole("button", { name: "Change + remove 2 connections" }));
+    expect(screen.getByRole("combobox", { name: "Type" })).toHaveTextContent("Clinic");
+    expect(screen.queryByRole("button", { name: /^Remove connection from/ })).toBeNull();
   });
 });
 
-describe("location connections", () => {
-  function pick(label: string, option: string) {
-    fireEvent.click(screen.getByRole("combobox", { name: label }));
-    fireEvent.click(screen.getByRole("option", { name: new RegExp(option) }));
-  }
-
-  it("connects one location to another from the panel, and removes it", () => {
+describe("connections", () => {
+  it("only offers links that follow port → warehouse → clinic", () => {
     act(() => {
-      addLocation("factory", "Plant A");
-      addLocation("warehouse", "Depot B");
+      addLocation("port", "Dar Port");
+      addLocation("warehouse", "Central Store");
+      addLocation("clinic", "Mwanza Clinic");
     });
     render(<DemoApp />);
 
-    const add = screen.getByRole("button", { name: /Add connection/ });
-    expect(add).toBeDisabled();
-    pick("From", "Plant A");
-    pick("To", "Depot B");
-    fireEvent.click(add);
+    // Clinics supply nothing, so they're not offered as a starting point.
+    fireEvent.click(screen.getByRole("combobox", { name: "From" }));
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Dar Port",
+      "Central Store",
+    ]);
+    fireEvent.click(screen.getByRole("option", { name: "Dar Port" }));
+
+    // A port only supplies warehouses; each option shows its distance.
+    fireEvent.click(screen.getByRole("combobox", { name: "To" }));
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+      expect.stringMatching(/^Central Store · \d+ km$/),
+    ]);
+    fireEvent.click(screen.getByRole("option", { name: /Central Store/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Add connection/ }));
 
     const remove = screen.getByRole("button", {
-      name: "Remove connection from Plant A to Depot B",
+      name: "Remove connection from Dar Port to Central Store",
     });
-    // Plant A → Depot B exists, so it isn't offered again…
-    pick("From", "Plant A");
+    // The link is listed with its straight-line distance…
+    expect(remove.closest("li")).toHaveTextContent(/Dar Port→toCentral Store\d+ km/);
+    // …and isn't offered again.
+    pick("From", "Dar Port");
     expect(screen.getByRole("combobox", { name: "To" })).toBeDisabled();
-    // …but the reverse direction still is.
-    pick("From", "Depot B");
-    pick("To", "Plant A");
-    fireEvent.click(add);
-    expect(
-      screen.getByRole("button", { name: "Remove connection from Depot B to Plant A" }),
-    ).toBeInTheDocument();
 
     fireEvent.click(remove);
     expect(
-      screen.queryByRole("button", { name: "Remove connection from Plant A to Depot B" }),
+      screen.queryByRole("button", { name: "Remove connection from Dar Port to Central Store" }),
     ).toBeNull();
   });
 
-  it("shows outgoing and incoming connections in a location's expanded row", () => {
+  it("shows who supplies a location and what it supplies", () => {
     act(() => {
-      const a = addLocation("factory", "Plant A");
-      const b = addLocation("warehouse", "Depot B");
-      const c = addLocation("retail-store", "Shop C");
-      demoActions.connectLocations(a, b);
-      demoActions.connectLocations(c, a);
+      addChain();
+      addLocation("warehouse", "North Store");
     });
     render(<DemoApp />);
-    openLocation("Plant A");
+    openLocation("Central Store");
 
+    expect(screen.getByRole("button", { name: "Remove supply from Dar Port" })).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Remove connection to Depot B" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Remove connection from Shop C" }),
+      screen.getByRole("button", { name: "Remove supply to Mwanza Clinic" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /Remove location \+ 2 connections/ }),
     ).toBeInTheDocument();
 
-    // Shop C → Plant A exists, but Plant A → Shop C doesn't, so it's offered.
-    pick("Connect Plant A to", "Shop C");
-    expect(screen.getByRole("button", { name: "Remove connection to Shop C" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Remove supply to Mwanza Clinic" }));
+    expect(screen.queryByRole("button", { name: "Remove supply to Mwanza Clinic" })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Remove connection to Depot B" }));
-    expect(screen.queryByRole("button", { name: "Remove connection to Depot B" })).toBeNull();
+    // A clinic can be given a supplier from its own row; only warehouses are offered.
+    openLocation("Mwanza Clinic");
+    expect(screen.queryByText("Supplies")).toBeNull();
+    fireEvent.click(screen.getByRole("combobox", { name: "Mwanza Clinic is supplied by" }));
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+      expect.stringMatching(/^Central Store · /),
+      expect.stringMatching(/^North Store · /),
+    ]);
+    fireEvent.click(screen.getByRole("option", { name: /North Store/ }));
+    expect(
+      screen.getByRole("button", { name: "Remove supply from North Store" }),
+    ).toBeInTheDocument();
   });
 
   it("removing a location removes its connections", () => {
     act(() => {
-      const a = addLocation("factory", "Plant A");
-      const b = addLocation("warehouse", "Depot B");
-      demoActions.connectLocations(a, b);
+      addChain();
     });
     render(<DemoApp />);
-    openLocation("Plant A");
+    openLocation("Central Store");
     fireEvent.click(screen.getByRole("button", { name: /Remove location/ }));
     expect(screen.queryByRole("button", { name: /Remove connection from/ })).toBeNull();
   });
@@ -260,9 +299,9 @@ describe("working hours", () => {
     expect(changes.at(-1)?.sun).toEqual([{ open: 0, close: 1440 }]);
   });
 
-  it("edits a saved location's hours", () => {
+  it("edits a saved clinic's hours", () => {
     act(() => {
-      addLocation("factory", "Plant A");
+      addLocation("clinic", "Mwanza Clinic");
     });
     function Hours() {
       return <output>{JSON.stringify(useDemoState().locations[0]?.hours?.sat)}</output>;
@@ -273,7 +312,7 @@ describe("working hours", () => {
         <Hours />
       </>,
     );
-    openLocation("Plant A");
+    openLocation("Mwanza Clinic");
     expect(screen.getByText("Mon–Fri 09:00–17:00")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));

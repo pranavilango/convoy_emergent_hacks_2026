@@ -1,8 +1,8 @@
 import type { Connection } from "./types";
 
 /**
- * Connections are directed: `fromId → toId` (e.g. factory → warehouse). A→B and B→A are two
- * separate connections. They carry no distance or cost.
+ * Connections are directed supply links `fromId → toId`: port → warehouse or warehouse → clinic
+ * (the rule lives in `kinds.ts` and is enforced by the reducer).
  */
 
 export function involves(connection: Connection, locationId: string): boolean {

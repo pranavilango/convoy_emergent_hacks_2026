@@ -3,10 +3,11 @@
 import { AdvancedMarker, Map, Polyline, useMap } from "@vis.gl/react-google-maps";
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 
-import { pointBeforeEnd, visualMidpoint } from "@/lib/demo/geometry";
+import { distanceKm, formatDistance, pointBeforeEnd, visualMidpoint } from "@/lib/demo/geometry";
 import { degrees, findConnection, involves } from "@/lib/demo/graph";
 import { summarizeHours } from "@/lib/demo/hours";
-import type { Connection, Location, LocationType } from "@/lib/demo/types";
+import { canSupply, KIND_INFO, kindLabel, SUPPLIES } from "@/lib/demo/kinds";
+import type { Connection, Location } from "@/lib/demo/types";
 import { cn } from "@/lib/utils";
 
 import type { Selection } from "./selection";
@@ -31,7 +32,6 @@ export function MapView({
   mapId,
   locations,
   connections,
-  types,
   selection,
   connectingFrom,
   focus,
@@ -44,9 +44,8 @@ export function MapView({
   mapId: string;
   locations: Location[];
   connections: Connection[];
-  types: LocationType[];
   selection: Selection;
-  /** When set, clicking another location connects (or disconnects) it from this one. */
+  /** When set, clicking a location this one can supply connects (or disconnects) it. */
   connectingFrom: string | null;
   focus: FocusRequest | null;
   onSelect: (selection: Selection) => void;
@@ -55,7 +54,6 @@ export function MapView({
   onRemoveConnection: (connectionId: string) => void;
   onBackgroundClick: () => void;
 }) {
-  const typeById = new globalThis.Map(types.map((t) => [t.id, t]));
   const locationById = new globalThis.Map(locations.map((l) => [l.id, l]));
   const degreeById = degrees(connections);
 
@@ -115,55 +113,55 @@ export function MapView({
       )}
 
       {locations.map((location) => {
-        const type = typeById.get(location.typeId);
-        if (!type) return null;
         const isOrigin = location.id === connectingFrom;
+        const origin = connectingFrom ? locationById.get(connectingFrom) : undefined;
+        const state: SquareState =
+          isOrigin || location.id === focusLocationId
+            ? "active"
+            : !origin
+              ? "idle"
+              : !canSupply(origin.kind, location.kind)
+                ? "unavailable"
+                : findConnection(connections, origin.id, location.id)
+                  ? "linked"
+                  : "candidate";
         return (
           <LocationSquare
             key={location.id}
             location={location}
-            type={type}
-            state={
-              isOrigin || location.id === focusLocationId
-                ? "active"
-                : connectingFrom && findConnection(connections, connectingFrom, location.id)
-                  ? "linked"
-                  : connectingFrom
-                    ? "candidate"
-                    : "idle"
-            }
+            state={state}
             onClick={() => {
-              if (connectingFrom) {
-                if (!isOrigin) onConnectTo(location.id);
-              } else {
-                onSelect({ kind: "location", id: location.id });
-              }
+              if (!connectingFrom) onSelect({ kind: "location", id: location.id });
+              else if (state === "linked" || state === "candidate") onConnectTo(location.id);
             }}
           />
         );
       })}
 
-      {selectedLocation && typeById.get(selectedLocation.typeId) && (
+      {selectedLocation && (
         <MapCard position={selectedLocation} gap={14}>
-          <CardLabel color={typeById.get(selectedLocation.typeId)!.color}>
-            {typeById.get(selectedLocation.typeId)!.name}
+          <CardLabel color={KIND_INFO[selectedLocation.kind].color}>
+            {kindLabel(selectedLocation)}
           </CardLabel>
           <p className="mt-1.5 text-base leading-tight tracking-tight">{selectedLocation.name}</p>
           <p className="mt-1 text-xs leading-snug opacity-60">{selectedLocation.address}</p>
           <ul className="mt-2.5 space-y-0.5 font-mono text-[10px] uppercase tracking-wider opacity-80">
-            {selectedLocation.hours ? (
-              summarizeHours(selectedLocation.hours).map((line) => <li key={line}>{line}</li>)
+            {selectedLocation.kind === "port" ? (
+              <li>Open 24/7</li>
             ) : (
-              <li className="opacity-70">Hours not set</li>
+              summarizeHours(selectedLocation.hours).map((line) => <li key={line}>{line}</li>)
             )}
           </ul>
           <div className="mt-3 flex items-center justify-between border-t border-ink-foreground/15 pt-2.5">
             <span className="font-mono text-[10px] uppercase tracking-wider opacity-70">
               {connectionCountLabel(degreeById.get(selectedLocation.id) ?? 0)}
             </span>
-            <CardButton onClick={() => onStartConnecting(selectedLocation.id)}>
-              Connect ↘
-            </CardButton>
+            {/* Clinics are the end of the chain: nothing to connect to. */}
+            {SUPPLIES[selectedLocation.kind] && (
+              <CardButton onClick={() => onStartConnecting(selectedLocation.id)}>
+                Connect ↘
+              </CardButton>
+            )}
           </div>
         </MapCard>
       )}
@@ -178,7 +176,7 @@ export function MapView({
             )}
             gap={10}
           >
-            <CardLabel>Connection</CardLabel>
+            <CardLabel>Supply link</CardLabel>
             <p className="mt-1.5 text-sm leading-snug">
               {locationById.get(selectedConnection.fromId)!.name}
               <span aria-hidden className="mx-1.5 font-mono opacity-60">
@@ -186,6 +184,15 @@ export function MapView({
               </span>
               <span className="sr-only"> to </span>
               {locationById.get(selectedConnection.toId)!.name}
+            </p>
+            <p className="mt-1.5 font-mono text-[10px] uppercase tracking-wider opacity-80">
+              {formatDistance(
+                distanceKm(
+                  locationById.get(selectedConnection.fromId)!,
+                  locationById.get(selectedConnection.toId)!,
+                ),
+              )}{" "}
+              straight line
             </p>
             <div className="mt-3 flex justify-end border-t border-ink-foreground/15 pt-2.5">
               <CardButton onClick={() => onRemoveConnection(selectedConnection.id)}>
@@ -206,29 +213,29 @@ export function connectionCountLabel(count: number): string {
 
 // --- Locations -----------------------------------------------------------------------------
 
-type SquareState = "idle" | "active" | "linked" | "candidate";
+/** In connect mode, "linked" and "candidate" squares can be clicked; "unavailable" ones are a
+ *  kind the origin can't supply, so they're dimmed. */
+type SquareState = "idle" | "active" | "linked" | "candidate" | "unavailable";
 
 /** A location drawn as a square centred exactly on its coordinates, so connection lines meet
  *  the middle of each square. */
 function LocationSquare({
   location,
-  type,
   state,
   onClick,
 }: {
   location: Location;
-  type: LocationType;
   state: SquareState;
   onClick: () => void;
 }) {
   return (
     <AdvancedMarker
       position={{ lat: location.lat, lng: location.lng }}
-      title={`${location.name} (${type.name})`}
+      title={`${location.name} (${kindLabel(location)})`}
       onClick={onClick}
       anchorLeft="-50%"
       anchorTop="-50%"
-      zIndex={state === "active" ? 900 : state === "idle" ? null : 800}
+      zIndex={state === "active" ? 900 : state === "idle" || state === "unavailable" ? null : 800}
       className="group"
     >
       <div className="relative font-display">
@@ -239,13 +246,14 @@ function LocationSquare({
             state === "linked" &&
               "shadow-[0_0_0_1.5px_var(--color-ink-foreground),0_0_0_4px_var(--color-ink)]",
             state === "candidate" && "cursor-crosshair",
+            state === "unavailable" && "cursor-not-allowed opacity-35 group-hover:scale-100",
           )}
-          style={{ backgroundColor: type.color }}
+          style={{ backgroundColor: KIND_INFO[location.kind].color }}
         />
-        {state !== "active" && (
+        {state !== "active" && state !== "unavailable" && (
           <span className="pointer-events-none absolute bottom-full left-1/2 mb-2 hidden max-w-48 -translate-x-1/2 truncate whitespace-nowrap rounded-sm bg-ink px-2 py-1 text-xs text-ink-foreground group-hover:block">
             {location.name}
-            {state === "linked" && <span className="ml-1.5 opacity-60">· connected</span>}
+            {state === "linked" && <span className="ml-1.5 opacity-60">· supplied</span>}
           </span>
         )}
       </div>
@@ -282,7 +290,7 @@ function arrowIcon(weight: number, opacity: number): google.maps.IconSequence {
  * A directed connection: a straight ink line from one square to another, ending in a small open
  * chevron just outside the destination square. The line stops short of the destination's centre
  * by a fixed number of screen pixels (recomputed as you zoom) so the arrow is never hidden under
- * the square. It encodes direction only, not distance.
+ * the square. Its length on the map is the straight-line distance shown in the card.
  */
 function ConnectionLine({
   from,

@@ -1,34 +1,46 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
+import { distanceKm, formatDistance } from "@/lib/demo/geometry";
 import { connectionsOf, degrees, findConnection, incoming, outgoing } from "@/lib/demo/graph";
+import { cloneHours, hoursError, summarizeHours, type WeeklyHours } from "@/lib/demo/hours";
 import {
-  cloneHours,
-  DEFAULT_HOURS,
-  hoursError,
-  summarizeHours,
-  type WeeklyHours,
-} from "@/lib/demo/hours";
-import { MAX_LOCATION_NAME_LENGTH } from "@/lib/demo/reducer";
+  KIND_INFO,
+  kindLabel,
+  SUPPLIED_BY,
+  SUPPLIES,
+  type LocationKind,
+  type PortMode,
+} from "@/lib/demo/kinds";
+import { connectionsBrokenByKind, MAX_LOCATION_NAME_LENGTH } from "@/lib/demo/reducer";
 import { demoActions } from "@/lib/demo/store";
-import type { Connection, Location, LocationType } from "@/lib/demo/types";
+import type { Connection, Location } from "@/lib/demo/types";
 import { cn } from "@/lib/utils";
 
-import { Button, FieldLabel, focusRing, SectionLabel, Swatch, TextInput } from "./controls";
+import {
+  Button,
+  FieldLabel,
+  focusRing,
+  SectionLabel,
+  Segmented,
+  Swatch,
+  TextInput,
+} from "./controls";
 import { HoursEditor } from "./hours-editor";
+import { KIND_OPTIONS, PORT_MODE_OPTIONS } from "./location-kinds";
 import { Select } from "./select";
+
+const plural = (n: number, word: string) => `${n} ${n === 1 ? word : `${word}s`}`;
 
 export function LocationList({
   locations,
-  types,
   connections,
   selectedId,
   onSelect,
   onStartConnecting,
 }: {
   locations: Location[];
-  types: LocationType[];
   connections: Connection[];
   selectedId: string | null;
   /** Select a location and move the map to it (null clears the selection). */
@@ -36,7 +48,6 @@ export function LocationList({
   /** Enter "click squares on the map to connect" mode. Omitted when the map isn't available. */
   onStartConnecting?: (id: string) => void;
 }) {
-  const typeById = new Map(types.map((t) => [t.id, t]));
   const degreeById = degrees(connections);
   // Newest first: the one you just added is the one you're most likely to look at.
   const ordered = [...locations].reverse();
@@ -51,14 +62,14 @@ export function LocationList({
 
       {locations.length === 0 ? (
         <p className="border-y border-foreground/30 py-4 text-sm opacity-80">
-          No locations yet. Search for an address above and it will appear on the map.
+          No locations yet. Search for a port, warehouse, or clinic above and it will appear on the
+          map.
         </p>
       ) : (
         <ul className="divide-y divide-foreground/30 border-y border-foreground/30">
           {ordered.map((location) => {
-            const type = typeById.get(location.typeId);
-            if (!type) return null;
             const selected = location.id === selectedId;
+            const degree = degreeById.get(location.id) ?? 0;
             return (
               <li key={location.id}>
                 <button
@@ -70,7 +81,7 @@ export function LocationList({
                     focusRing,
                   )}
                 >
-                  <Swatch color={type.color} className="translate-y-[1px]" />
+                  <Swatch color={KIND_INFO[location.kind].color} className="translate-y-[1px]" />
                   <span className="min-w-0">
                     <span className="block truncate text-lg leading-tight tracking-tight">
                       {location.name}
@@ -78,13 +89,10 @@ export function LocationList({
                     <span className="block truncate text-xs opacity-70">{location.address}</span>
                   </span>
                   <span className="text-right font-mono text-[11px] uppercase tracking-wider opacity-70">
-                    {type.name}
-                    {(degreeById.get(location.id) ?? 0) > 0 && (
-                      <span
-                        className="block normal-case"
-                        aria-label={`${degreeById.get(location.id)} connections`}
-                      >
-                        —{degreeById.get(location.id)}
+                    {kindLabel(location)}
+                    {degree > 0 && (
+                      <span className="block normal-case" aria-label={plural(degree, "connection")}>
+                        —{degree}
                       </span>
                     )}
                   </span>
@@ -94,7 +102,6 @@ export function LocationList({
                     key={location.id}
                     location={location}
                     locations={locations}
-                    types={types}
                     connections={connections}
                     onRemoved={() => onSelect(null)}
                     {...(onStartConnecting ? { onStartConnecting } : {})}
@@ -112,14 +119,12 @@ export function LocationList({
 function LocationEditor({
   location,
   locations,
-  types,
   connections,
   onRemoved,
   onStartConnecting,
 }: {
   location: Location;
   locations: Location[];
-  types: LocationType[];
   connections: Connection[];
   onRemoved: () => void;
   onStartConnecting?: (id: string) => void;
@@ -153,17 +158,24 @@ function LocationEditor({
           }}
         />
       </div>
-      <Select
-        label="Type"
-        value={location.typeId}
-        onChange={(typeId) => demoActions.setLocationType(location.id, typeId)}
-        options={types.map((t) => ({ value: t.id, label: t.name, color: t.color }))}
-      />
+      <KindField location={location} locations={locations} connections={connections} />
+      {location.kind === "port" && (
+        <div className="space-y-2">
+          <span className="block font-mono text-[11px] uppercase tracking-wider opacity-70">
+            Port
+          </span>
+          <Segmented
+            label="Port"
+            value={location.portMode ?? "sea"}
+            options={PORT_MODE_OPTIONS}
+            onChange={(mode: PortMode) => demoActions.setPortMode(location.id, mode)}
+          />
+        </div>
+      )}
       <LocationHours location={location} />
       <LocationConnections
         location={location}
         locations={locations}
-        types={types}
         connections={connections}
         {...(onStartConnecting ? { onStartConnecting } : {})}
       />
@@ -176,9 +188,71 @@ function LocationEditor({
         }}
       >
         {own.length > 0
-          ? `Remove location + ${own.length} ${own.length === 1 ? "connection" : "connections"}`
+          ? `Remove location + ${plural(own.length, "connection")}`
           : "Remove location"}
       </Button>
+    </div>
+  );
+}
+
+/** Type select. A change that would break existing supply links asks first. */
+function KindField({
+  location,
+  locations,
+  connections,
+}: {
+  location: Location;
+  locations: Location[];
+  connections: Connection[];
+}) {
+  const [pending, setPending] = useState<{ kind: LocationKind; count: number } | null>(null);
+
+  function choose(kind: LocationKind) {
+    if (kind === location.kind) {
+      setPending(null);
+      return;
+    }
+    const count = connectionsBrokenByKind({ locations, connections }, location.id, kind).length;
+    if (count === 0) {
+      demoActions.setLocationKind(location.id, kind);
+      setPending(null);
+    } else {
+      setPending({ kind, count });
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <Select
+        label="Type"
+        value={location.kind}
+        onChange={(v) => choose(v as LocationKind)}
+        options={KIND_OPTIONS}
+      />
+      {pending && (
+        <div role="alert" className="space-y-2 rounded-sm border border-foreground/40 p-3">
+          <p className="text-sm">
+            A {KIND_INFO[pending.kind].label.toLowerCase()} can&apos;t keep{" "}
+            {pending.count === 1 ? "this connection" : `these ${pending.count} connections`}:
+            supplies only flow port → warehouse → clinic. Change the type and remove{" "}
+            {pending.count === 1 ? "it" : "them"}?
+          </p>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              onClick={() => {
+                demoActions.setLocationKind(location.id, pending.kind);
+                setPending(null);
+              }}
+            >
+              Change + remove {plural(pending.count, "connection")}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setPending(null)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -186,29 +260,37 @@ function LocationEditor({
 function LocationConnections({
   location,
   locations,
-  types,
   connections,
   onStartConnecting,
 }: {
   location: Location;
   locations: Location[];
-  types: LocationType[];
   connections: Connection[];
   onStartConnecting?: (id: string) => void;
 }) {
   const locationById = new Map(locations.map((l) => [l.id, l]));
-  const colorOf = (l: Location) => types.find((t) => t.id === l.typeId)?.color;
   const rows = (list: Connection[], end: (c: Connection) => string) =>
     list
       .map((c) => ({ connection: c, other: locationById.get(end(c)) }))
       .filter((r): r is { connection: Connection; other: Location } => r.other !== undefined)
       .sort((r, s) => r.other.name.localeCompare(s.other.name));
-  const outRows = rows(outgoing(connections, location.id), (c) => c.toId);
-  const inRows = rows(incoming(connections, location.id), (c) => c.fromId);
-  // Destinations this location doesn't point to yet.
-  const candidates = locations.filter(
-    (l) => l.id !== location.id && !findConnection(connections, location.id, l.id),
+
+  const downstream = SUPPLIES[location.kind];
+  const upstream = SUPPLIED_BY[location.kind];
+  const ofKind = (kind: LocationKind | null) =>
+    kind ? locations.filter((l) => l.kind === kind) : [];
+  // Sites of the right kind that aren't linked yet, in each direction.
+  const supplyCandidates = ofKind(downstream).filter(
+    (l) => !findConnection(connections, location.id, l.id),
   );
+  const supplierCandidates = ofKind(upstream).filter(
+    (l) => !findConnection(connections, l.id, location.id),
+  );
+  const option = (l: Location) => ({
+    value: l.id,
+    label: `${l.name} · ${formatDistance(distanceKm(location, l))}`,
+    color: KIND_INFO[l.kind].color,
+  });
 
   return (
     <div className="space-y-3">
@@ -216,7 +298,7 @@ function LocationConnections({
         <span className="font-mono text-[11px] uppercase tracking-wider opacity-70">
           Connections
         </span>
-        {onStartConnecting && candidates.length > 0 && (
+        {onStartConnecting && supplyCandidates.length > 0 && (
           <Button
             variant="ghost"
             className="font-mono text-[11px] uppercase tracking-wider"
@@ -226,58 +308,88 @@ function LocationConnections({
           </Button>
         )}
       </div>
-      <ConnectionChips
-        label="To"
-        arrow="→"
-        rows={outRows}
-        colorOf={colorOf}
-        removeLabel={(other) => `Remove connection to ${other.name}`}
-      />
-      <ConnectionChips
-        label="From"
-        arrow="←"
-        rows={inRows}
-        colorOf={colorOf}
-        removeLabel={(other) => `Remove connection from ${other.name}`}
-      />
-      {candidates.length > 0 && (
-        <Select
-          label={`Connect ${location.name} to`}
-          hideLabel
-          value={undefined}
-          placeholder="+ Connect to…"
-          onChange={(id) => demoActions.connectLocations(location.id, id)}
-          options={candidates.map((l) => ({
-            value: l.id,
-            label: l.name,
-            ...(colorOf(l) ? { color: colorOf(l)! } : {}),
-          }))}
-        />
+
+      {upstream && (
+        <ConnectionGroup
+          label="Supplied by"
+          arrow="←"
+          origin={location}
+          rows={rows(incoming(connections, location.id), (c) => c.fromId)}
+          removeLabel={(other) => `Remove supply from ${other.name}`}
+          empty={
+            ofKind(upstream).length === 0
+              ? `No ${KIND_INFO[upstream].plural.toLowerCase()} on the map yet.`
+              : "None yet."
+          }
+        >
+          {supplierCandidates.length > 0 && (
+            <Select
+              label={`${location.name} is supplied by`}
+              hideLabel
+              compact
+              value={undefined}
+              placeholder={`+ Add a supplying ${KIND_INFO[upstream].label.toLowerCase()}…`}
+              onChange={(id) => demoActions.connectLocations(id, location.id)}
+              options={supplierCandidates.map(option)}
+            />
+          )}
+        </ConnectionGroup>
+      )}
+
+      {downstream && (
+        <ConnectionGroup
+          label="Supplies"
+          arrow="→"
+          origin={location}
+          rows={rows(outgoing(connections, location.id), (c) => c.toId)}
+          removeLabel={(other) => `Remove supply to ${other.name}`}
+          empty={
+            ofKind(downstream).length === 0
+              ? `No ${KIND_INFO[downstream].plural.toLowerCase()} on the map yet.`
+              : "None yet."
+          }
+        >
+          {supplyCandidates.length > 0 && (
+            <Select
+              label={`${location.name} supplies`}
+              hideLabel
+              compact
+              value={undefined}
+              placeholder={`+ Add a ${KIND_INFO[downstream].label.toLowerCase()} it supplies…`}
+              onChange={(id) => demoActions.connectLocations(location.id, id)}
+              options={supplyCandidates.map(option)}
+            />
+          )}
+        </ConnectionGroup>
       )}
     </div>
   );
 }
 
-function ConnectionChips({
+function ConnectionGroup({
   label,
   arrow,
+  origin,
   rows,
-  colorOf,
   removeLabel,
+  empty,
+  children,
 }: {
   label: string;
   arrow: string;
+  origin: Location;
   rows: { connection: Connection; other: Location }[];
-  colorOf: (l: Location) => string | undefined;
   removeLabel: (other: Location) => string;
+  empty: string;
+  children?: ReactNode;
 }) {
   return (
-    <div className="grid grid-cols-[3rem_1fr] items-start gap-2">
-      <span className="pt-1 font-mono text-[11px] uppercase tracking-wider opacity-70">
+    <div className="space-y-2">
+      <span className="block font-mono text-[11px] uppercase tracking-wider opacity-70">
         {label} <span aria-hidden>{arrow}</span>
       </span>
       {rows.length === 0 ? (
-        <span className="pt-0.5 text-sm opacity-60">None</span>
+        <p className="text-sm opacity-60">{empty}</p>
       ) : (
         <ul className="flex flex-wrap gap-1.5">
           {rows.map(({ connection, other }) => (
@@ -285,8 +397,11 @@ function ConnectionChips({
               key={connection.id}
               className="flex items-center gap-1.5 rounded-sm border border-foreground py-0.5 pl-2 pr-1 text-sm"
             >
-              {colorOf(other) && <Swatch color={colorOf(other)!} />}
+              <Swatch color={KIND_INFO[other.kind].color} />
               <span className="max-w-32 truncate">{other.name}</span>
+              <span className="font-mono text-[11px] opacity-70">
+                {formatDistance(distanceKm(origin, other))}
+              </span>
               <button
                 type="button"
                 aria-label={removeLabel(other)}
@@ -302,6 +417,7 @@ function ConnectionChips({
           ))}
         </ul>
       )}
+      {children}
     </div>
   );
 }
@@ -309,6 +425,17 @@ function ConnectionChips({
 function LocationHours({ location }: { location: Location }) {
   const [draft, setDraft] = useState<WeeklyHours | null>(null);
   const problem = draft ? hoursError(draft) : null;
+
+  if (location.kind === "port") {
+    return (
+      <div className="space-y-1.5">
+        <span className="block font-mono text-[11px] uppercase tracking-wider opacity-70">
+          Working hours
+        </span>
+        <p className="text-sm">Open 24/7. Ports never close.</p>
+      </div>
+    );
+  }
 
   if (draft) {
     return (
@@ -345,20 +472,16 @@ function LocationHours({ location }: { location: Location }) {
         <Button
           variant="ghost"
           className="font-mono text-[11px] uppercase tracking-wider"
-          onClick={() => setDraft(cloneHours(location.hours ?? DEFAULT_HOURS))}
+          onClick={() => setDraft(cloneHours(location.hours))}
         >
-          {location.hours ? "Edit" : "Add hours"}
+          Edit
         </Button>
       </div>
-      {location.hours ? (
-        <ul className="space-y-0.5 text-sm">
-          {summarizeHours(location.hours).map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
-      ) : (
-        <p className="text-sm opacity-70">Not set yet.</p>
-      )}
+      <ul className="space-y-0.5 text-sm">
+        {summarizeHours(location.hours).map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
     </div>
   );
 }
