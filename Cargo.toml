@@ -12,18 +12,27 @@ path = "src/lib.rs"
 [[bin]]
 name = "medroute"
 path = "src/main.rs"
+required-features = ["server"]
 
 [[test]]
 name = "tests"
 path = "tests/tests.rs"
+required-features = ["server"]
+
+# The HTTP server (src/main.rs) is on by default. The library alone (`default-features = false`)
+# has no networking or threads, so it also compiles to WebAssembly: see medroute-wasm/, which
+# the Next.js app embeds to run the allocator inside its own API route (e.g. on Vercel).
+[features]
+default = ["server"]
+server = ["dep:axum", "dep:dotenvy", "dep:tokio"]
 
 [dependencies]
-axum = { version = "0.7", default-features = false, features = ["http1", "json", "multipart", "query", "tokio"] }
-dotenvy = "0.15"
+axum = { version = "0.7", default-features = false, features = ["http1", "json", "multipart", "query", "tokio"], optional = true }
+dotenvy = { version = "0.15", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"], optional = true }
 
 [profile.release]
 lto = true

@@ -3,3 +3,5 @@ node_modules
 out
 package-lock.json
 next-env.d.ts
+# Generated: the Rust allocator as base64 WebAssembly (npm run build:engine)
+src/lib/solar-allocation/engine-binary.ts

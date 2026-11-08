@@ -202,6 +202,57 @@ describe("solar allocation analysis", () => {
     );
   });
 
+  it("runs the built-in Rust engine (WebAssembly) when no service URL is set", async () => {
+    delete process.env["MEDROUTE_API_URL"];
+    process.env["GEMINI_API_KEY"] = "test-api-key";
+    // Only Gemini may be called over the network: the optimizer runs in-process.
+    const fetchMock = vi.fn((url: string) => {
+      if (!url.includes("generativelanguage")) throw new Error(`Unexpected fetch: ${url}`);
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ candidates: [{ content: { parts: [{ text: "Explained." }] } }] }),
+          { status: 200 },
+        ),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await POST(
+      new Request("http://localhost/api/solar-allocation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ network, n: 2 }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.allocation).toMatchObject({ selected: ["warehouse-1", "clinic-1"], n: 2 });
+    expect(body.allocation.optimized_weighted_hours).toBeLessThan(
+      body.allocation.baseline_weighted_hours,
+    );
+    expect(body.steps.map((s: { units: number }) => s.units)).toEqual([1, 2]);
+    expect(body.analysis).toBe("Explained.");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("reports the built-in engine's validation errors by site name", async () => {
+    delete process.env["MEDROUTE_API_URL"];
+    vi.stubGlobal("fetch", vi.fn());
+    const unlinked = { ...network, connections: [network.connections[0]!] };
+    const response = await POST(
+      new Request("http://localhost/api/solar-allocation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ network: unlinked, n: 1 }),
+      }),
+    );
+    expect(response.status).toBe(422);
+    const { error } = await response.json();
+    expect(error).not.toContain("clinic-1");
+    expect(error).toMatch(/Central Store|Clinic A/);
+  });
+
   it("names sites instead of ids in the optimizer's errors", async () => {
     process.env["MEDROUTE_API_URL"] = "http://medroute.test/";
     vi.stubGlobal(

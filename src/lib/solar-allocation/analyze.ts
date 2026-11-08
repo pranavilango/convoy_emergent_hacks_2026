@@ -1,10 +1,11 @@
 import { distanceKm } from "@/lib/demo/geometry";
 import { summarizeHours, type WeeklyHours } from "@/lib/demo/hours";
 
+import { runEngine } from "./engine";
+
 type JsonObject = Record<string, unknown>;
 
 const DEFAULT_MODEL = "gemini-3.5-flash-lite";
-const DEFAULT_MEDROUTE_URL = "http://127.0.0.1:8080";
 
 export type SolarAllocationNetwork = {
   locations: Array<{
@@ -44,19 +45,41 @@ export class MedrouteApiError extends Error {
   }
 }
 
+/**
+ * Ask the Rust allocator for the best `n` sites. By default it runs in-process as WebAssembly
+ * (./engine.ts), so this works on Vercel with nothing else deployed. Set MEDROUTE_API_URL to use
+ * a separately running medroute HTTP service instead (`npm run dev:engine`); same results.
+ */
 export async function generateSolarAllocation(
   network: SolarAllocationNetwork,
   n: number,
 ): Promise<SolarAllocation> {
-  const graph = toBackendGraph(network);
-  const form = new FormData();
-  form.append(
-    "file",
-    new Blob([JSON.stringify(graph)], { type: "application/json" }),
-    "network.json",
-  );
+  const graph = JSON.stringify(toBackendGraph(network));
+  const serviceUrl = process.env["MEDROUTE_API_URL"]?.trim();
+  const result = serviceUrl
+    ? await callService(serviceUrl, graph, n, network)
+    : callEmbeddedEngine(graph, n, network);
+  return checkAllocation(result, n, network);
+}
 
-  const baseUrl = (process.env["MEDROUTE_API_URL"] || DEFAULT_MEDROUTE_URL).replace(/\/$/, "");
+function callEmbeddedEngine(graph: string, n: number, network: SolarAllocationNetwork): unknown {
+  const outcome = runEngine(graph, n);
+  if ("error" in outcome) {
+    throw new MedrouteApiError(withSiteNames(outcome.error, network), outcome.status);
+  }
+  return outcome.ok;
+}
+
+async function callService(
+  serviceUrl: string,
+  graph: string,
+  n: number,
+  network: SolarAllocationNetwork,
+): Promise<unknown> {
+  const form = new FormData();
+  form.append("file", new Blob([graph], { type: "application/json" }), "network.json");
+
+  const baseUrl = serviceUrl.replace(/\/$/, "");
   const response = await fetch(`${baseUrl}/api/analyze?n=${encodeURIComponent(n)}&strategy=auto`, {
     method: "POST",
     body: form,
@@ -77,7 +100,15 @@ export async function generateSolarAllocation(
     throw new MedrouteApiError(withSiteNames(message, network), response.status);
   }
 
-  const result: unknown = await response.json();
+  return response.json();
+}
+
+/** Reject anything that isn't a well-formed answer for this network and `n`. */
+function checkAllocation(
+  result: unknown,
+  n: number,
+  network: SolarAllocationNetwork,
+): SolarAllocation {
   const eligibleIds = new Set(
     network.locations.filter((location) => location.kind !== "port").map((location) => location.id),
   );

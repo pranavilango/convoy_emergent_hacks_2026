@@ -92,8 +92,9 @@ export function AllocationAnalysisDialog({
             <p className="mt-3 text-xs opacity-70">
               {error?.includes("Rust allocation service") ? (
                 <>
-                  Start the Rust service with <code>cargo run --release</code>, then try Analyze
-                  again.
+                  Start it with <code>npm run dev:engine</code>, or remove{" "}
+                  <code>MEDROUTE_API_URL</code> from the server&apos;s environment to use the
+                  built-in engine.
                 </>
               ) : error?.includes("Gemini") ? (
                 "Check GEMINI_API_KEY and server network access, then try Analyze again."

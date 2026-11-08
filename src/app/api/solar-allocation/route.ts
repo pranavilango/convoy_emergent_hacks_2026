@@ -71,7 +71,7 @@ export async function POST(request: Request) {
       return Response.json(
         {
           error:
-            "Cannot reach the Rust allocation service at the configured MEDROUTE_API_URL (default http://127.0.0.1:8080). Start it with `cargo run --release` or set MEDROUTE_API_URL to its address.",
+            "Cannot reach the Rust allocation service at MEDROUTE_API_URL. Start it with `npm run dev:engine`, or remove MEDROUTE_API_URL to use Convoy's built-in engine.",
         },
         { status: 503 },
       );

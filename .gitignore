@@ -1,6 +1,7 @@
 # Dependencies
 node_modules
 /target/
+/medroute-wasm/target/
 
 # Next.js
 .next/

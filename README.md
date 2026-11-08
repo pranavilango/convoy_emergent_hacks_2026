@@ -25,20 +25,20 @@ Requires Node.js 20.9+.
 
 ```sh
 npm install
-npm run dev        # http://localhost:3000, plus the Rust engine on :8080
+npm run dev        # http://localhost:3000
 ```
 
-| Script               | What it does                    |
-| -------------------- | ------------------------------- |
-| `npm run dev`        | Site (hot reload) + Rust engine |
-| `npm run dev:web`    | Site only                       |
-| `npm run dev:engine` | Rust engine only                |
-| `npm run build`      | Production build                |
-| `npm start`          | Serve the production build      |
-| `npm run lint`       | ESLint (Next + Prettier rules)  |
-| `npm run typecheck`  | TypeScript, no emit             |
-| `npm test`           | Run tests once                  |
-| `npm run format`     | Format everything with Prettier |
+| Script                 | What it does                     |
+| ---------------------- | -------------------------------- |
+| `npm run dev`          | Dev server with hot reload       |
+| `npm run dev:engine`   | Optional Rust HTTP service       |
+| `npm run build:engine` | Rebuild the embedded Rust engine |
+| `npm run build`        | Production build                 |
+| `npm start`            | Serve the production build       |
+| `npm run lint`         | ESLint (Next + Prettier rules)   |
+| `npm run typecheck`    | TypeScript, no emit              |
+| `npm test`             | Run tests once                   |
+| `npm run format`       | Format everything with Prettier  |
 
 ## Landing page (`/`)
 
@@ -101,11 +101,21 @@ discarded on load.
 
 ### Rust allocation service
 
-The Next.js route uploads a JSON graph to the Rust service using the multipart `/api/analyze`
-contract documented in [API.md](API.md). `npm run dev` starts it for you (`cargo run --release`,
-or reuses one already answering on `MEDROUTE_API_URL`); it needs Rust from
-[rustup.rs](https://rustup.rs). Set `MEDROUTE_API_URL` in `.env.local` when the service is not at
-`http://127.0.0.1:8080`.
+The allocator is the Rust library in `src/lib.rs`. The app runs it **inside its own API route**,
+compiled to WebAssembly, so Analyze works locally and on Vercel with no separate service and no
+Rust needed to run the site:
+
+- `medroute-wasm/` wraps the library's `analyze_bytes` in a tiny import-free WebAssembly ABI.
+- `npm run build:engine` compiles it and embeds it in `src/lib/solar-allocation/engine-binary.ts`
+  (generated; commit it). Run this after any change to the Rust engine. It needs Rust from
+  [rustup.rs](https://rustup.rs) plus `rustup target add wasm32-unknown-unknown`.
+- `src/lib/solar-allocation/engine.ts` loads and runs it; results match the HTTP API exactly.
+
+The original HTTP service still works (contract in [API.md](API.md)): run it with
+`npm run dev:engine` (`cargo run --release`) and set `MEDROUTE_API_URL` (for example
+`http://127.0.0.1:8080`) to have the route call it instead. Leave `MEDROUTE_API_URL` unset to use
+the built-in engine. The HTTP server is the crate's default `server` feature; the WebAssembly
+build uses the library without it.
 
 Before Analyze unlocks, the panel lists anything the engine would reject, by site name: unlinked
 sites, separate networks, sites closed all week or with overnight shifts, clinics without a
@@ -148,10 +158,8 @@ format and uploads a JSON `file` to `POST /api/analyze?n=<n>&strategy=auto`; see
 for the backend contract. The response has `selected`, `n`, `solver`, `baseline_weighted_hours`, and
 `optimized_weighted_hours`; the API route returns that allocation with Gemini's `analysis`.
 
-Set `GEMINI_API_KEY` and `MEDROUTE_API_URL` in `.env.local` for local development and in the
-production environment. `MEDROUTE_API_URL` must point to a deployed Rust service; the local default
-`http://127.0.0.1:8080` only works on the same machine as Next.js. `GEMINI_MODEL` defaults to
-`gemini-3.5-flash-lite`.
+Set `GEMINI_API_KEY` in `.env.local` for local development and in the production environment.
+`GEMINI_MODEL` defaults to `gemini-3.5-flash-lite`. `MEDROUTE_API_URL` is optional (see above).
 
 ### Map style
 
@@ -164,8 +172,8 @@ look is used instead.
 
 Import the repository in Vercel. It detects Next.js automatically. Add
 `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` and `NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID` under Project Settings, and
-add the Vercel domains to the key's referrer restrictions. Deploy the Rust medroute service
-separately on a host reachable by the Vercel application and set `MEDROUTE_API_URL` to that
-service's URL; the localhost default will not work in Vercel. Also set `GEMINI_API_KEY` (and
-optionally `GEMINI_MODEL`) in Vercel's server-side environment variables. Pushes to `main` deploy to
+add the Vercel domains to the key's referrer restrictions. Set `GEMINI_API_KEY` (and optionally
+`GEMINI_MODEL`) in Vercel's server-side environment variables. The Rust allocator ships inside the
+app, so nothing else needs deploying; leave `MEDROUTE_API_URL` unset on Vercel (if it's set to a
+localhost address there, Analyze can't reach it). Pushes to `main` deploy to
 production, and other branches get preview URLs.
