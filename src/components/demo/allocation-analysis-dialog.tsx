@@ -251,11 +251,14 @@ function AnalysisResult({
       {result.steps.length > 0 && (
         <section aria-labelledby="allocation-curve-title" className="space-y-2">
           <Heading id="allocation-curve-title">Each extra solar unit</Heading>
-          <BudgetCurve
-            baselineHours={allocation.baseline_weighted_hours}
-            steps={result.steps}
-            locations={locations}
-          />
+          {/* A plain frame: sharp corners, one thin line. */}
+          <div className="border border-white/20 p-4">
+            <BudgetCurve
+              baselineHours={allocation.baseline_weighted_hours}
+              steps={result.steps}
+              locations={locations}
+            />
+          </div>
         </section>
       )}
 

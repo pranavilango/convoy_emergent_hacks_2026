@@ -29,13 +29,13 @@ export function BudgetSection({ budget }: { budget: Budget }) {
         </SectionLabel>
       </h2>
       <p className="text-sm opacity-80">
-        What one solar power unit costs, and how much money there is to spend on solar.
+        What solar for one location costs, and how much money there is to spend on solar.
       </p>
 
       <AmountField
         id="budget-unit-cost"
         label="Cost per solar unit"
-        hint="Price of one unit, installed."
+        hint="One unit powers one location, installed."
         saved={budget.unitCost}
         onCommit={demoActions.setUnitCost}
       />
