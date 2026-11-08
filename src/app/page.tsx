@@ -273,12 +273,6 @@ export default function Home() {
             </div>
           ))}
         </div>
-        <Link
-          href="/demo"
-          className="mt-12 inline-flex items-center gap-3 rounded-sm bg-aqua px-5 py-3 text-sm font-medium text-night transition-colors hover:bg-white"
-        >
-          Try it on the Ghana sample network <span aria-hidden>↗</span>
-        </Link>
       </section>
 
       {/* Footer */}

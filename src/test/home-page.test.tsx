@@ -32,6 +32,7 @@ describe("Home page", () => {
       expect(screen.getAllByText(output)).toHaveLength(2);
     }
     expect(document.body.textContent).not.toMatch(/Panel sizing|Battery backup|batteries/);
+    expect(screen.queryByText(/Try it on the Ghana sample network/)).toBeNull();
     expect(screen.getByText("Power Planner")).toBeInTheDocument();
     expect(screen.getByAltText(/^Earth at night/)).toBeInTheDocument();
   });
