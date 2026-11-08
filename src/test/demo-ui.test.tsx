@@ -295,6 +295,19 @@ describe("clinic population", () => {
 });
 
 describe("budget", () => {
+  it("shows the saved amounts even when they arrive after the fields are on screen", () => {
+    render(<DemoApp />);
+    const section = screen.getByRole("region", { name: /Budget/ });
+    expect(within(section).getByLabelText("Cost per solar unit")).toHaveValue("");
+    // e.g. the browser's saved data loading after the first render, or another tab saving.
+    act(() => {
+      demoActions.setUnitCost(1200);
+      demoActions.setTotalBudget(10_000);
+    });
+    expect(within(section).getByLabelText("Cost per solar unit")).toHaveValue("1,200");
+    expect(within(section).getByLabelText("Total budget")).toHaveValue("10,000");
+  });
+
   it("saves the cost per unit and total budget, and shows how many units that covers", () => {
     render(<DemoApp />);
     const section = screen.getByRole("region", { name: /Budget/ });

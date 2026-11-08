@@ -500,7 +500,7 @@ function CardButton({ onClick, children }: { onClick: () => void; children: Reac
         e.stopPropagation();
         onClick();
       }}
-      className="rounded-sm bg-ink-foreground px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-ink outline-none transition-opacity hover:opacity-85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-foreground"
+      className="rounded-sm bg-aqua px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-night outline-none transition-colors hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-aqua"
     >
       {children}
     </button>

@@ -18,6 +18,43 @@ describe("Home page", () => {
     expect(screen.getByAltText(/^Earth at night/)).toBeInTheDocument();
   });
 
+  it("powers on only the hero headline at load, Convoy first, all within 1.5s", () => {
+    const { container } = render(<Home />);
+    const lit = [...container.querySelectorAll<HTMLElement>(".flicker-in")];
+    const headline = screen.getByRole("heading", { level: 1 }).firstElementChild as HTMLElement;
+    expect(lit).toContain(headline);
+    expect(lit).toContain(screen.getByText("Power Planner"));
+    expect(lit).toHaveLength(2 + 5); // Convoy, Power Planner, and the five outputs
+
+    const ends = lit.map(
+      (el) => parseFloat(el.style.animationDelay) + parseFloat(el.style.animationDuration),
+    );
+    expect(Math.max(...ends)).toBeLessThanOrEqual(1.5);
+    const starts = lit.map((el) => parseFloat(el.style.animationDelay));
+    expect(parseFloat(headline.style.animationDelay)).toBe(Math.min(...starts));
+    expect(new Set(starts).size).toBe(starts.length);
+
+    // The navbar logo stays steady and is all white.
+    const logo = container.querySelector("header svg");
+    expect(logo?.closest(".flicker-in")).toBeNull();
+    expect(logo).toHaveClass("fill-white", "stroke-white");
+  });
+
+  it("flickers on the kilowatt line and the footer as they scroll into view", () => {
+    const { container } = render(<Home />);
+    expect([...container.querySelectorAll(".power-on-view")].map((el) => el.textContent)).toEqual([
+      "Every kilowatt counts.",
+      "Power care.",
+    ]);
+  });
+
+  it("sets the Earth photo up to turn about the planet's centre as it scrolls", () => {
+    render(<Home />);
+    const spinner = screen.getByAltText(/^Earth at night/).closest(".earth-spin");
+    expect(spinner).not.toBeNull();
+    expect(spinner?.closest(".earth-view")).not.toBeNull();
+  });
+
   it("sets its own title rather than inheriting the layout default", () => {
     expect(metadata.title).toEqual({
       absolute: "Convoy — Solar power planner for medical supply networks",

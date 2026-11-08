@@ -268,7 +268,7 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
   );
 
   const layout = (
-    <div className="flex min-h-dvh flex-col bg-background font-display text-foreground md:h-dvh">
+    <div className="theme-night flex min-h-dvh flex-col bg-background font-display text-foreground md:h-dvh">
       <DemoHeader count={locations.length} connectionCount={connections.length} />
       <div className="flex flex-1 flex-col md:grid md:min-h-0 md:grid-cols-[minmax(22rem,26rem)_1fr]">
         <section aria-label="Map" className="order-1 h-[55vh] md:order-2 md:h-auto">
@@ -367,7 +367,7 @@ function ConnectBanner({
   return (
     <div
       role="status"
-      className="absolute inset-x-4 top-4 z-10 flex items-center justify-between gap-4 rounded-sm bg-foreground px-4 py-3 text-background shadow-lg md:left-1/2 md:right-auto md:w-[26rem] md:-translate-x-1/2"
+      className="absolute inset-x-4 top-4 z-10 flex items-center justify-between gap-4 rounded-sm bg-aqua px-4 py-3 text-night shadow-lg md:left-1/2 md:right-auto md:w-[26rem] md:-translate-x-1/2"
     >
       <div className="min-w-0">
         <div className="font-mono text-[11px] uppercase tracking-wider opacity-70">
@@ -386,7 +386,7 @@ function ConnectBanner({
       <button
         type="button"
         onClick={onDone}
-        className="shrink-0 rounded-sm bg-background px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider text-foreground outline-none hover:opacity-85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-background"
+        className="shrink-0 rounded-sm bg-night px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider text-white outline-none hover:opacity-85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-night"
       >
         Done · Esc
       </button>
@@ -447,7 +447,7 @@ function Legend({
         ))}
         <li className="flex items-center gap-2 border-t border-ink-foreground/15 pt-1.5">
           {/* Aquamarine like the lines' core (the legend's ink is their outline). */}
-          <span aria-hidden className="inline-block w-3.5 text-center leading-none text-background">
+          <span aria-hidden className="inline-block w-3.5 text-center leading-none text-aqua">
             →
           </span>
           <span>Supply link</span>

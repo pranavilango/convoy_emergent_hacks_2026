@@ -203,6 +203,13 @@ function ClinicPopulation({ location }: { location: Location }) {
   const saved = location.population === null ? "" : formatPopulation(location.population);
   const [text, setText] = useState(saved);
   const [error, setError] = useState<string | null>(null);
+  // Follow the saved population if it changes underneath us (e.g. in another tab).
+  const [shown, setShown] = useState(location.population);
+  if (location.population !== shown) {
+    setShown(location.population);
+    setText(saved);
+    setError(null);
+  }
 
   function commit() {
     if (text.trim() === saved) {

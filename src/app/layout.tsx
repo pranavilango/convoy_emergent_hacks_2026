@@ -42,7 +42,13 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className={`${interTight.variable} ${jetbrainsMono.variable}`}>
+    // data-scroll-behavior: the landing page scrolls smoothly to its sections; this tells Next to
+    // switch that off during page navigations so they stay instant.
+    <html
+      lang="en"
+      data-scroll-behavior="smooth"
+      className={`${interTight.variable} ${jetbrainsMono.variable}`}
+    >
       <body>{children}</body>
     </html>
   );

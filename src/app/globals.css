@@ -41,7 +41,9 @@
   --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
   --color-ink: var(--ink);
   --color-ink-foreground: var(--ink-foreground);
-  --color-logo: var(--logo);
+  --color-night: var(--night);
+  --color-night-navy: var(--night-navy);
+  --color-aqua: var(--aqua);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -83,9 +85,11 @@
   --foreground: oklch(0.17 0.01 40);
   --ink: oklch(0.14 0.015 250);
   --ink-foreground: oklch(0.93 0.02 60);
-  /* Navy (#18417c), a deep partner to the aquamarine, for the Convoy logo mark only
-     (src/components/convoy-mark.tsx). Keep in sync with src/app/icon.svg. */
-  --logo: oklch(0.38 0.11 258);
+  /* Landing page: black, deepening to the navy at the top of the Earth photo (#01030e). Text is
+     white, with aqua (same as --background) for what matters most. */
+  --night: oklch(0 0 0);
+  --night-navy: oklch(0.103 0.033 264.9);
+  --aqua: oklch(0.78 0.12 178);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.129 0.042 264.695);
   --popover: oklch(1 0 0);
@@ -161,6 +165,145 @@
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+  }
+
+  /* Landing page "power on": text flickers like lights on an unreliable grid coming back, glows
+     in its own colour for a moment, then settles. `.flicker-in` plays on load (the hero's
+     headline pieces; see lightsOn() in src/app/page.tsx); `.power-on-view` plays when
+     <PowerOn> scrolls into view. */
+  @keyframes power-on {
+    0% {
+      opacity: 0;
+      text-shadow: none;
+      animation-timing-function: steps(1, end);
+    }
+    7% {
+      opacity: 0.85;
+      text-shadow: var(--power-glow);
+      animation-timing-function: steps(1, end);
+    }
+    10% {
+      opacity: 0.08;
+      text-shadow: none;
+      animation-timing-function: steps(1, end);
+    }
+    16% {
+      opacity: 0.7;
+      text-shadow: var(--power-glow);
+      animation-timing-function: steps(1, end);
+    }
+    19% {
+      opacity: 0.12;
+      text-shadow: none;
+      animation-timing-function: steps(1, end);
+    }
+    27% {
+      opacity: 1;
+      text-shadow: var(--power-glow);
+      animation-timing-function: steps(1, end);
+    }
+    30% {
+      opacity: 0.4;
+      text-shadow: none;
+      animation-timing-function: steps(1, end);
+    }
+    36% {
+      opacity: 1;
+      text-shadow: var(--power-glow);
+      animation-timing-function: ease-out;
+    }
+    100% {
+      opacity: 1;
+      text-shadow: none;
+    }
+  }
+
+  /* The glow takes the text's own colour, so aquamarine text glows aquamarine and white glows
+     white, like a lit tube on a dark page. */
+  .flicker-in,
+  .power-on-view {
+    --power-glow:
+      0 0 0.04em currentColor, 0 0 0.3em color-mix(in oklch, currentColor 55%, transparent),
+      0 0 0.8em color-mix(in oklch, currentColor 25%, transparent);
+  }
+
+  .flicker-in {
+    animation: power-on 0.9s both;
+  }
+
+  .power-on-view {
+    display: inline-block;
+  }
+
+  .power-on-view[data-armed]:not([data-on]) {
+    opacity: 0;
+  }
+
+  .power-on-view[data-on] {
+    animation: power-on 1.1s both;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .flicker-in,
+    .power-on-view[data-on] {
+      animation: none;
+    }
+
+    .power-on-view[data-armed]:not([data-on]) {
+      opacity: 1;
+    }
+  }
+
+  /* The landing page's nav links glide to their sections. */
+  @media (prefers-reduced-motion: no-preference) {
+    html:has(.landing) {
+      scroll-behavior: smooth;
+    }
+  }
+
+  /* Keep overscroll and the area behind the page black on the dark pages. */
+  body:has(.landing),
+  body:has(.theme-night) {
+    background-color: var(--color-night);
+  }
+
+  /* The demo's night theme: flips the shared background/foreground tokens, so every
+     bg-background / text-foreground / border-foreground inside turns black and white.
+     Aquamarine (`aqua`) marks primary actions and "on" states. */
+  .theme-night {
+    --background: var(--night);
+    --foreground: oklch(1 0 0);
+  }
+
+  /* Landing page Earth: turns ±3° about the planet's real centre as its section scrolls past. The
+     origin is the centre of the horizon's circle in the photo (fitted from 32 points along the
+     limb, ±2.4px): 47.9% across, 391.3% of the photo's height down. */
+  .earth-view {
+    view-timeline-name: --earth;
+  }
+
+  .earth-spin {
+    transform-origin: 47.9% 391.3%;
+  }
+
+  @keyframes earth-spin {
+    from {
+      rotate: 3deg;
+    }
+
+    to {
+      rotate: -3deg;
+    }
+  }
+
+  @supports (animation-timeline: view()) {
+    @media (prefers-reduced-motion: no-preference) {
+      .earth-spin {
+        animation: earth-spin linear both;
+        animation-timeline: --earth;
+        animation-range: cover;
+      }
+    }
   }
 
   /* Map location squares: no focus outline after a mouse click (the larger square and its card

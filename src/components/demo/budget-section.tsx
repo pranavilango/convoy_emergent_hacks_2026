@@ -89,6 +89,14 @@ function AmountField({
   const savedText = saved === null ? "" : formatPlain(saved);
   const [text, setText] = useState(savedText);
   const [error, setError] = useState<string | null>(null);
+  // Follow the saved amount when it changes underneath us: the browser's saved data arriving
+  // after the first render, another tab, or our own commit.
+  const [shown, setShown] = useState(saved);
+  if (saved !== shown) {
+    setShown(saved);
+    setText(savedText);
+    setError(null);
+  }
   const errorId = `${id}-error`;
 
   function commit() {

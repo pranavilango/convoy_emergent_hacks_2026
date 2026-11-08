@@ -41,7 +41,7 @@ export function AllocationAnalysisDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="allocation-dialog-title"
-        className="my-auto max-h-[90dvh] w-full max-w-2xl overflow-y-auto rounded-sm bg-background p-6 text-foreground shadow-2xl md:p-8"
+        className="my-auto max-h-[90dvh] w-full max-w-2xl overflow-y-auto rounded-sm border border-white/15 bg-background p-6 text-foreground shadow-2xl md:p-8"
       >
         <div className="flex items-start justify-between gap-6 border-b border-foreground/30 pb-5">
           <div>

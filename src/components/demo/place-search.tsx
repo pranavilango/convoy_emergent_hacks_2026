@@ -227,7 +227,7 @@ export function PlaceSearch({ onPick }: { onPick: (place: PickedPlace) => void }
           id={listId}
           role="listbox"
           aria-label="Address suggestions"
-          className="absolute inset-x-0 top-full z-30 mt-1 max-h-80 overflow-auto rounded-sm bg-ink py-1 text-ink-foreground shadow-lg"
+          className="absolute inset-x-0 top-full z-30 mt-1 max-h-80 overflow-auto rounded-sm border border-white/15 bg-ink py-1 text-ink-foreground shadow-lg"
         >
           {suggestions.length === 0 && !loading && (
             <li className="px-3 py-2 text-sm opacity-70">No matches.</li>

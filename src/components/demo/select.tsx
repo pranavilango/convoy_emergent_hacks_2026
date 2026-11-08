@@ -188,7 +188,7 @@ export function Select({
           aria-labelledby={labelId}
           aria-activedescendant={optionId(activeIndex)}
           onKeyDown={onListKeyDown}
-          className="absolute inset-x-0 top-full z-30 mt-1 max-h-64 overflow-auto rounded-sm bg-ink py-1 text-ink-foreground shadow-lg outline-none"
+          className="absolute inset-x-0 top-full z-30 mt-1 max-h-64 overflow-auto rounded-sm border border-white/15 bg-ink py-1 text-ink-foreground shadow-lg outline-none"
         >
           {options.map((option, i) => {
             const isSelected = option.value === value;

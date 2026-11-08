@@ -37,7 +37,29 @@ npm run dev        # http://localhost:3000
 | `npm test`          | Run tests once                  |
 | `npm run format`    | Format everything with Prettier |
 
+## Landing page (`/`)
+
+A dark page: black at the top, deepening into the navy of the Earth photo, which fades back out
+to black below it. Text is white, with aquamarine for what matters most ("Convoy", "Every kilowatt
+counts.", the solution's key phrase, "Power care.", and links). The hero's headline powers on like
+lights on a weak grid coming back: "Convoy" first, then "Power Planner" and the outputs at uneven
+moments, all within about 1.5s, each glowing in its own colour. Further down, "Every kilowatt
+counts." and the footer's "Power care." flicker on as they scroll into view. The Earth photo turns
+as it scrolls past: it rotates (±3°) about the planet's real centre, fitted from the horizon in
+the photo, so the horizon stays put while the land and lights slide along it (CSS scroll-driven
+animation, `.earth-spin`; browsers without it show the photo still). With reduced motion turned
+on, nothing flickers or turns. The nav links glide smoothly to their sections. The logo is all
+white.
+
+- Flicker: `power-on` keyframes in `src/app/globals.css`; `lightsOn()` in `src/app/page.tsx` sets
+  the hero timings, and `src/components/landing/power-on.tsx` plays it on scroll.
+- Colours: `night`, `night-navy`, and `aqua` tokens in `src/app/globals.css`.
+
 ## Demo (`/demo`)
+
+The demo uses the same night theme: `.theme-night` (in `src/app/globals.css`) on the demo's root
+turns its `background`/`foreground` tokens black and white, with aquamarine for primary actions
+and "on" states.
 
 "Try the demo" opens a map editor for a medical supply network. Search an address and add it as a
 **port** (sea or air), **warehouse**, or **clinic** (with the population it serves); it's pinned

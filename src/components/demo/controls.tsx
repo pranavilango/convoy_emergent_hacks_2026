@@ -20,7 +20,7 @@ export function SectionLabel({
   return (
     <div className="flex items-baseline justify-between font-mono text-[11px] uppercase tracking-wider">
       <span>
-        _{index} {children}
+        <span className="text-aqua">_{index}</span> {children}
       </span>
       {aside !== undefined && <span className="opacity-70">{aside}</span>}
     </div>
@@ -50,7 +50,7 @@ export function FieldLabel({
 type ButtonVariant = "primary" | "outline" | "ghost" | "danger";
 
 const buttonVariants: Record<ButtonVariant, string> = {
-  primary: "bg-foreground text-background hover:opacity-85",
+  primary: "bg-aqua text-night hover:bg-white",
   outline: "border border-foreground hover:bg-foreground hover:text-background",
   ghost: "underline-offset-4 hover:underline",
   danger: "border border-foreground bg-ink text-ink-foreground hover:opacity-85",
@@ -123,7 +123,7 @@ export function Segmented<T extends string>({
             onClick={() => onChange(o.value)}
             className={cn(
               "rounded-sm border border-foreground px-3 py-1 font-mono text-[11px] uppercase tracking-wider transition-colors",
-              active ? "bg-foreground text-background" : "opacity-70 hover:opacity-100",
+              active ? "border-aqua bg-aqua text-night" : "opacity-70 hover:opacity-100",
               focusRing,
             )}
           >

@@ -90,7 +90,7 @@ export function HoursEditor({
                   onClick={() => setDay(day, range ? [] : [rangeForReopen(day)])}
                   className={cn(
                     "rounded-sm border border-foreground px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider transition-colors",
-                    range ? "bg-foreground text-background" : "opacity-70 hover:opacity-100",
+                    range ? "border-aqua bg-aqua text-night" : "opacity-70 hover:opacity-100",
                     focusRing,
                   )}
                 >
