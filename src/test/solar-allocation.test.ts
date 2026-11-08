@@ -142,6 +142,73 @@ describe("solar allocation analysis", () => {
     expect(String(fetchMock.mock.calls[1]?.[1]?.body)).toContain("estimatedWaitHoursAfter");
   });
 
+  it("passes hours, clinic population, and link distances on to Gemini", async () => {
+    process.env["GEMINI_API_KEY"] = "test-api-key";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: JSON.stringify(allocation) }] } }],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "OK" }] } }] }), {
+          status: 200,
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const detailed = {
+      locations: [
+        { ...network.locations[0], population: null, hours: ["Every day 24 hours"] },
+        {
+          ...network.locations[1],
+          population: null,
+          hours: ["Mon–Fri 09:00–17:00", "Sat–Sun Closed"],
+        },
+        { ...network.locations[2], population: 12_400, hours: ["Every day 08:00–16:00"] },
+      ],
+      connections: [
+        { ...network.connections[0], distanceKm: 42.5 },
+        { ...network.connections[1], distanceKm: 118 },
+      ],
+    };
+
+    const response = await POST(
+      new Request("http://localhost/api/solar-allocation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ network: detailed }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const prompt = String(fetchMock.mock.calls[0]?.[1]?.body);
+    expect(prompt).toContain("prefer sites that are not already open 24/7");
+    for (const detail of ["12400", "Sat–Sun Closed", "42.5", "118"]) {
+      expect(prompt).toContain(detail);
+    }
+  });
+
+  it("rejects malformed optional details", async () => {
+    for (const bad of [
+      { locations: [{ ...network.locations[2], population: -1 }], connections: [] },
+      { locations: [{ ...network.locations[2], hours: "9-5" }], connections: [] },
+      { locations: [], connections: [{ ...network.connections[0], distanceKm: "far" }] },
+    ]) {
+      const response = await POST(
+        new Request("http://localhost/api/solar-allocation", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ network: bad }),
+        }),
+      );
+      expect(response.status).toBe(400);
+    }
+  });
+
   it("rejects generated recommendations for ports or with invalid wait-time changes", async () => {
     process.env["GEMINI_API_KEY"] = "test-api-key";
     const invalidAllocation = {

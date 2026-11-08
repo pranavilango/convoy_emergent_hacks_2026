@@ -1,3 +1,4 @@
+import type { Budget } from "./budget";
 import type { WeeklyHours } from "./hours";
 import type { LocationKind, PortMode } from "./kinds";
 
@@ -34,6 +35,8 @@ export type Connection = {
 export type DemoState = {
   locations: Location[];
   connections: Connection[];
+  /** Cost per solar power unit and total money available. */
+  budget: Budget;
 };
 
 export type NewLocation = Omit<Location, "id" | "createdAt">;

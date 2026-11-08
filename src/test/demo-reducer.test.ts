@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  amountError,
+  EMPTY_BUDGET,
+  formatMoney,
+  parseAmount,
+  unitsAffordable,
+} from "@/lib/demo/budget";
+import {
   distanceKm,
   formatDistance,
   letterSize,
@@ -275,6 +282,60 @@ describe("connections", () => {
   });
 });
 
+describe("budget", () => {
+  const setBudget = (s: DemoState, unitCost?: number | null, total?: number | null) =>
+    reducer(s, {
+      type: "setBudget",
+      ...(unitCost !== undefined ? { unitCost } : {}),
+      ...(total !== undefined ? { total } : {}),
+    });
+
+  it("starts empty, and sets, keeps, and clears each amount independently", () => {
+    expect(INITIAL_STATE.budget).toEqual(EMPTY_BUDGET);
+    let s = setBudget(INITIAL_STATE, 1200);
+    expect(s.budget).toEqual({ unitCost: 1200, total: null });
+    s = setBudget(s, undefined, 50_000.5);
+    expect(s.budget).toEqual({ unitCost: 1200, total: 50_000.5 });
+    expect(setBudget(s, 1200)).toBe(s);
+    expect(setBudget(s, null).budget).toEqual({ unitCost: null, total: 50_000.5 });
+  });
+
+  it("refuses zero, negative, fractional-cent, and non-finite amounts", () => {
+    for (const bad of [0, -5, 1.234, NaN, Infinity, 2e12]) {
+      expect(setBudget(INITIAL_STATE, bad)).toBe(INITIAL_STATE);
+      expect(setBudget(INITIAL_STATE, undefined, bad)).toBe(INITIAL_STATE);
+    }
+  });
+
+  it("is kept when locations and connections change", () => {
+    let s = setBudget(chain(), 1200, 10_000);
+    s = reducer(s, { type: "updateLocation", id: "w1", kind: "clinic" });
+    s = reducer(s, { type: "removeLocation", id: "p" });
+    expect(s.budget).toEqual({ unitCost: 1200, total: 10_000 });
+  });
+
+  it("reads typed amounts and explains bad ones", () => {
+    expect(parseAmount("1,250")).toBe(1250);
+    expect(parseAmount(" $1,250.50 ")).toBe(1250.5);
+    for (const bad of ["", "abc", "0", "-3", "1.234", "12k", "1."]) {
+      expect(parseAmount(bad)).toBeNull();
+    }
+    expect(amountError("")).toBeNull();
+    expect(amountError("12k")).toMatch(/number in dollars/);
+    expect(amountError("1.234")).toMatch(/two decimal places/);
+    expect(amountError("0")).toMatch(/more than \$0/);
+    expect(formatMoney(1250)).toBe("$1,250");
+    expect(formatMoney(1250.5)).toBe("$1,250.50");
+  });
+
+  it("counts whole units the budget covers, in cents", () => {
+    expect(unitsAffordable({ unitCost: 1200, total: 10_000 })).toBe(8);
+    expect(unitsAffordable({ unitCost: 0.1, total: 0.3 })).toBe(3);
+    expect(unitsAffordable({ unitCost: 500, total: 499.99 })).toBe(0);
+    expect(unitsAffordable({ unitCost: 500, total: null })).toBeNull();
+  });
+});
+
 describe("hours helpers", () => {
   it("summarises consecutive identical days", () => {
     expect(summarizeHours(DEFAULT_HOURS)).toEqual(["Mon–Fri 09:00–17:00", "Sat–Sun Closed"]);
@@ -430,6 +491,14 @@ describe("parseState", () => {
     expect(parsed.locations.map((l) => l.population)).toEqual([null, null, null, null]);
     raw.locations[3].population = "lots";
     expect(parseState(raw)?.locations[3]?.population).toBeNull();
+  });
+
+  it("loads a missing or malformed budget as not set", () => {
+    const raw = JSON.parse(JSON.stringify(network()));
+    delete raw.budget;
+    expect(parseState(raw)?.budget).toEqual(EMPTY_BUDGET);
+    raw.budget = { unitCost: 1200, total: "lots" };
+    expect(parseState(raw)?.budget).toEqual({ unitCost: 1200, total: null });
   });
 
   it("always loads ports as open 24/7", () => {

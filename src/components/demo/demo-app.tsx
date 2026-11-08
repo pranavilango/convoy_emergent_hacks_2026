@@ -4,12 +4,16 @@ import { APIProvider } from "@vis.gl/react-google-maps";
 import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 
+import { ConvoyMark } from "@/components/convoy-mark";
+import { distanceKm } from "@/lib/demo/geometry";
 import { findConnection, outgoing } from "@/lib/demo/graph";
+import { summarizeHours } from "@/lib/demo/hours";
 import { canSupply, KIND_INFO, LOCATION_KINDS, SUPPLIES } from "@/lib/demo/kinds";
 import { demoActions, useDemoState } from "@/lib/demo/store";
 import type { Location } from "@/lib/demo/types";
 
 import { AddLocationForm } from "./add-location-form";
+import { BudgetSection } from "./budget-section";
 import {
   AllocationAnalysisDialog,
   type AllocationAnalysisResult,
@@ -34,7 +38,7 @@ declare global {
 }
 
 export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) {
-  const { locations, connections } = useDemoState();
+  const { locations, connections, budget } = useDemoState();
   const [rawSelection, setSelection] = useState<Selection>(null);
   const [rawConnectingFrom, setConnectingFrom] = useState<string | null>(null);
   const [focus, setFocus] = useState<FocusRequest | null>(null);
@@ -124,13 +128,22 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           network: {
-            locations: locations.map(({ id, name, kind, portMode }) => ({
+            locations: locations.map(({ id, name, kind, portMode, population, hours }) => ({
               id,
               name,
               kind,
               portMode,
+              population,
+              // A readable weekly summary, e.g. ["Mon–Fri 09:00–17:00", "Sat–Sun Closed"].
+              hours: kind === "port" ? ["Every day 24 hours"] : summarizeHours(hours),
             })),
-            connections: connections.map(({ fromId, toId }) => ({ fromId, toId })),
+            connections: connections.flatMap(({ fromId, toId }) => {
+              const from = locations.find((l) => l.id === fromId);
+              const to = locations.find((l) => l.id === toId);
+              if (!from || !to) return [];
+              const km = Math.round(distanceKm(from, to) * 10) / 10;
+              return [{ fromId, toId, distanceKm: km }];
+            }),
           },
         }),
       });
@@ -194,8 +207,11 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
         selectedConnectionId={selection?.kind === "connection" ? selection.id : null}
         onSelectConnection={selectConnectionFromPanel}
       />
-      <section aria-label="Solar allocation analysis" className="space-y-4">
-        <SectionLabel index="04">Analysis</SectionLabel>
+      <BudgetSection budget={budget} />
+      <section aria-labelledby="analysis-heading" className="space-y-4">
+        <h2 id="analysis-heading">
+          <SectionLabel index="06">Analysis</SectionLabel>
+        </h2>
         <p className="text-sm leading-relaxed opacity-75">
           Get two suggested 24/7 warehouses or clinics with estimated supply wait times before and
           after, then analyze the results.
@@ -386,7 +402,7 @@ function DemoHeader({ count, connectionCount }: { count: number; connectionCount
           href="/"
           className={`flex items-center gap-2 text-lg font-semibold tracking-tight ${focusRing}`}
         >
-          <span className="inline-block h-4 w-4 rounded-sm bg-foreground" />
+          <ConvoyMark />
           Convoy
         </Link>
         <span className="hidden font-mono text-[11px] uppercase tracking-wider sm:inline">

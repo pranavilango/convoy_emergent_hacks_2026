@@ -58,6 +58,10 @@ The network is a directed graph, ready to hand to the allocation engine:
 - **Connections** are the edges, stored as `{ id, fromId, toId }`. Supplies flow one way, so the
   only allowed links are port → warehouse and warehouse → clinic (no loops, nothing backwards,
   no skipping a step). Changing a site's type removes links that no longer fit, after asking.
+- **Budget** is stored as `budget: { unitCost, total }`: what one solar power unit costs and the
+  total money available, in US dollars (positive, at most two decimal places), or `null` until
+  entered. The panel shows how many whole units the budget covers. It's input for the upcoming
+  allocation engine and isn't sent to the Gemini analysis.
 - **Distance** isn't stored: it's the straight-line (great-circle) distance between the two ends,
   from `distanceKm()` in `geometry.ts`, so it's always in step with the locations.
 
@@ -67,8 +71,8 @@ discarded on load.
 - Page: `src/app/demo/page.tsx`. UI: `src/components/demo/`.
 - State: `src/lib/demo/`. `kinds.ts` defines the three kinds and the supply rule, `reducer.ts`
   enforces it, `graph.ts` has the connection helpers, `hours.ts` working hours, `population.ts`
-  clinic population, `geometry.ts` distance and marker sizing, and `store.ts` handles saving.
-  Swap `store.ts` to move to a backend.
+  clinic population, `budget.ts` the solar budget, `geometry.ts` distance and marker sizing, and
+  `store.ts` handles saving. Swap `store.ts` to move to a backend.
 
 ### Google Maps setup
 
@@ -102,14 +106,23 @@ Content-Type: application/json
 {
   "network": {
     "locations": [
-      { "id": "clinic-1", "name": "Clinic A", "kind": "clinic", "portMode": null }
+      {
+        "id": "clinic-1",
+        "name": "Clinic A",
+        "kind": "clinic",
+        "portMode": null,
+        "population": 12400,
+        "hours": ["Mon–Fri 08:00–16:00", "Sat–Sun Closed"]
+      }
     ],
-    "connections": []
+    "connections": [{ "fromId": "warehouse-1", "toId": "clinic-1", "distanceKm": 118 }]
   }
 }
 ```
 
-The response contains the generated `allocation` JSON and its `analysis`. The allocation has a
+`population`, `hours` (a readable weekly summary), and `distanceKm` are optional; the demo sends
+them so Gemini can favour sites that aren't already open 24/7, clinics serving more people, and
+long supply links. The response contains the generated `allocation` JSON and its `analysis`. The allocation has a
 `recommendations` array with exactly two entries, each including a `locationId`, `locationName`,
 `kind` (`warehouse` or `clinic`), `estimatedWaitHoursBefore`, `estimatedWaitHoursAfter`, and
 `rationale`. Wait-time values are hours. Set `GEMINI_API_KEY` in

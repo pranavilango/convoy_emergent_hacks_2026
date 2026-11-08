@@ -1,3 +1,4 @@
+import { EMPTY_BUDGET, isAmount, parseBudget } from "./budget";
 import { findConnection, involves } from "./graph";
 import { ALWAYS_OPEN, cloneHours, DEFAULT_HOURS, hoursError, parseHours } from "./hours";
 import type { WeeklyHours } from "./hours";
@@ -5,7 +6,7 @@ import { canSupply, isLocationKind, isPortMode, type LocationKind, type PortMode
 import { isPopulation } from "./population";
 import type { Connection, DemoState, Location, NewLocation } from "./types";
 
-export const INITIAL_STATE: DemoState = { locations: [], connections: [] };
+export const INITIAL_STATE: DemoState = { locations: [], connections: [], budget: EMPTY_BUDGET };
 
 export const MAX_LOCATION_NAME_LENGTH = 80;
 
@@ -30,6 +31,8 @@ export type DemoAction =
   /** Only port → warehouse and warehouse → clinic. Duplicates are ignored. */
   | { type: "addConnection"; id: string; fromId: string; toId: string }
   | { type: "removeConnection"; id: string }
+  /** Each amount: a positive dollar amount (cents at most), or null to clear it. */
+  | { type: "setBudget"; unitCost?: number | null; total?: number | null }
   | { type: "replace"; state: DemoState };
 
 export function normalizeName(name: string, max: number): string {
@@ -38,7 +41,7 @@ export function normalizeName(name: string, max: number): string {
 
 /** Connections of `locationId` that wouldn't be allowed if it became `kind`. */
 export function connectionsBrokenByKind(
-  state: DemoState,
+  state: Pick<DemoState, "locations" | "connections">,
   locationId: string,
   kind: LocationKind,
 ): Connection[] {
@@ -124,6 +127,7 @@ export function reducer(state: DemoState, action: DemoAction): DemoState {
       if (!kindChanged) return { ...state, locations };
       const broken = new Set(connectionsBrokenByKind(state, action.id, next.kind).map((c) => c.id));
       return {
+        ...state,
         locations,
         connections: broken.size
           ? state.connections.filter((c) => !broken.has(c.id))
@@ -154,6 +158,20 @@ export function reducer(state: DemoState, action: DemoAction): DemoState {
     case "removeConnection": {
       if (!state.connections.some((c) => c.id === action.id)) return state;
       return { ...state, connections: state.connections.filter((c) => c.id !== action.id) };
+    }
+
+    case "setBudget": {
+      const next = { ...state.budget };
+      for (const key of ["unitCost", "total"] as const) {
+        const value = action[key];
+        if (value === undefined) continue;
+        if (value !== null && !isAmount(value)) return state;
+        next[key] = value;
+      }
+      if (next.unitCost === state.budget.unitCost && next.total === state.budget.total) {
+        return state;
+      }
+      return { ...state, budget: next };
     }
 
     case "replace":
@@ -238,5 +256,5 @@ export function parseState(value: unknown): DemoState | null {
       connections.push(connection);
     }
   }
-  return { locations, connections };
+  return { locations, connections, budget: parseBudget(value["budget"]) };
 }

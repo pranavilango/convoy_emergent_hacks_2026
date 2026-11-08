@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { AnalysisText } from "@/components/demo/analysis-text";
 import { DemoApp } from "@/components/demo/demo-app";
 import { Select } from "@/components/demo/select";
 import { HoursEditor } from "@/components/demo/hours-editor";
@@ -163,7 +164,16 @@ describe("solar allocation analysis", () => {
     expect(screen.getByText("Estimated supply wait: 12 h before → 4 h after")).toBeInTheDocument();
     expect(screen.getByText("Estimated supply wait: 8 h before → 3 h after")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(String(fetchMock.mock.calls[0]?.[1]?.body)).toContain("Mwanza Clinic");
+    const sent = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(sent.network.locations.map((l: { name: string }) => l.name)).toContain("Mwanza Clinic");
+    // The demo's details go along: hours, clinic population.
+    expect(sent.network.locations).toContainEqual(
+      expect.objectContaining({
+        name: "Mwanza Clinic",
+        population: 1200,
+        hours: ["Mon–Fri 09:00–17:00", "Sat–Sun Closed"],
+      }),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Close network analysis" }));
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -281,6 +291,38 @@ describe("clinic population", () => {
     expect(screen.getByText("Not set yet. Planning needs it.")).toBeInTheDocument();
     const key = screen.getByRole("region", { name: /Location types/ });
     expect(within(key).getByText(/1 not set/)).toBeInTheDocument();
+  });
+});
+
+describe("budget", () => {
+  it("saves the cost per unit and total budget, and shows how many units that covers", () => {
+    render(<DemoApp />);
+    const section = screen.getByRole("region", { name: /Budget/ });
+    expect(within(section).getByRole("status")).toHaveTextContent(/Enter both amounts/);
+
+    const unitCost = within(section).getByLabelText("Cost per solar unit");
+    fireEvent.change(unitCost, { target: { value: "1,200" } });
+    fireEvent.keyDown(unitCost, { key: "Enter" });
+
+    const total = within(section).getByLabelText("Total budget");
+    fireEvent.change(total, { target: { value: "10k" } });
+    fireEvent.blur(total);
+    expect(within(section).getByRole("alert")).toHaveTextContent(/number in dollars/);
+
+    fireEvent.change(total, { target: { value: "$10000" } });
+    fireEvent.blur(total);
+    expect(total).toHaveValue("10,000");
+    expect(within(section).getByRole("status")).toHaveTextContent(
+      "Covers 8 units · $400 left over",
+    );
+
+    const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "null");
+    expect(saved.state.budget).toEqual({ unitCost: 1200, total: 10_000 });
+
+    // Clearing a field clears the amount.
+    fireEvent.change(unitCost, { target: { value: "" } });
+    fireEvent.blur(unitCost);
+    expect(within(section).getByRole("status")).toHaveTextContent(/Enter both amounts/);
   });
 });
 
@@ -470,5 +512,36 @@ describe("Select", () => {
     fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" });
     expect(screen.queryByRole("listbox")).toBeNull();
     expect(button).toHaveTextContent("Cherry");
+  });
+});
+
+describe("AnalysisText", () => {
+  it("renders Gemini's Markdown as headings, lists, and emphasis, never as raw symbols", () => {
+    render(
+      <AnalysisText
+        text={[
+          "### Why these sites",
+          "",
+          "*   **Central Store:** the main hub.",
+          "*   Mwanza Clinic serves *48,000* people.",
+          "",
+          "---",
+          "",
+          "1. Measure wait times.",
+          "2. Run a `pilot`.",
+          "",
+          "<b>not html</b>",
+        ].join("\n")}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "Why these sites" })).toBeInTheDocument();
+    const [bullets, steps] = screen.getAllByRole("list");
+    expect(within(bullets!).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(steps!).getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.getByText("Central Store:").tagName).toBe("STRONG");
+    expect(screen.getByText("48,000").tagName).toBe("EM");
+    expect(screen.getByRole("separator")).toBeInTheDocument();
+    expect(screen.getByText("<b>not html</b>")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/###|\*\*/);
   });
 });

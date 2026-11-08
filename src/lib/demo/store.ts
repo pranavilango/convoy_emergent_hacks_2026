@@ -129,6 +129,13 @@ export const demoActions = {
   removeConnection(id: string) {
     dispatch({ type: "removeConnection", id });
   },
+  /** Null clears the amount. */
+  setUnitCost(unitCost: number | null) {
+    dispatch({ type: "setBudget", unitCost });
+  },
+  setTotalBudget(total: number | null) {
+    dispatch({ type: "setBudget", total });
+  },
 };
 
 /** Test helper: forget the in-memory copy so the next read comes from storage again. */

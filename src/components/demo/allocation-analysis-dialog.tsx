@@ -3,6 +3,7 @@
 import type { KeyboardEvent } from "react";
 
 import type { SolarAllocation } from "@/lib/solar-allocation/analyze";
+import { AnalysisText } from "./analysis-text";
 import { Button } from "./controls";
 
 export type AllocationAnalysisResult = {
@@ -84,7 +85,7 @@ export function AllocationAnalysisDialog({
 
         {status === "ready" && result && (
           <div className="space-y-7 py-6">
-            <p className="text-sm leading-relaxed">{result.analysis}</p>
+            <AnalysisText text={result.analysis} />
 
             <section aria-labelledby="allocation-recommendations-title">
               <h3

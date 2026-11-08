@@ -3,6 +3,7 @@ import Image from "next/image";
 import Link from "next/link";
 
 import earth from "@/assets/earth-network.jpg";
+import { ConvoyMark } from "@/components/convoy-mark";
 
 export const metadata: Metadata = {
   title: { absolute: "Convoy — Solar power planner for medical supply networks" },
@@ -44,7 +45,7 @@ export default function Home() {
       {/* Nav */}
       <header className="flex items-center justify-between border-b border-foreground/30 px-6 py-4 md:px-10">
         <div className="flex items-center gap-2 text-lg font-semibold tracking-tight">
-          <span className="inline-block h-4 w-4 rounded-sm bg-foreground" />
+          <ConvoyMark />
           Convoy
         </div>
         <nav className="hidden gap-8 text-sm md:flex">

@@ -41,6 +41,7 @@
   --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
   --color-ink: var(--ink);
   --color-ink-foreground: var(--ink-foreground);
+  --color-logo: var(--logo);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -82,6 +83,9 @@
   --foreground: oklch(0.17 0.01 40);
   --ink: oklch(0.14 0.015 250);
   --ink-foreground: oklch(0.93 0.02 60);
+  /* Navy (#18417c), a deep partner to the aquamarine, for the Convoy logo mark only
+     (src/components/convoy-mark.tsx). Keep in sync with src/app/icon.svg. */
+  --logo: oklch(0.38 0.11 258);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.129 0.042 264.695);
   --popover: oklch(1 0 0);

@@ -72,14 +72,27 @@ function isSolarAllocationNetwork(value: unknown): value is SolarAllocationNetwo
       typeof location["id"] === "string" &&
       typeof location["name"] === "string" &&
       isLocationKind(location["kind"]) &&
-      (location["portMode"] === null || isPortMode(location["portMode"])),
+      (location["portMode"] === null || isPortMode(location["portMode"])) &&
+      // Optional details from the demo: clinic population and a weekly hours summary.
+      (location["population"] === undefined ||
+        location["population"] === null ||
+        isNonNegativeNumber(location["population"])) &&
+      (location["hours"] === undefined ||
+        (Array.isArray(location["hours"]) &&
+          location["hours"].length <= 7 &&
+          location["hours"].every((line) => typeof line === "string" && line.length <= 200))),
   );
   const connectionsValid = value["connections"].every(
     (connection) =>
       isJsonObject(connection) &&
       typeof connection["fromId"] === "string" &&
-      typeof connection["toId"] === "string",
+      typeof connection["toId"] === "string" &&
+      (connection["distanceKm"] === undefined || isNonNegativeNumber(connection["distanceKm"])),
   );
 
   return locationsValid && connectionsValid;
+}
+
+function isNonNegativeNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
