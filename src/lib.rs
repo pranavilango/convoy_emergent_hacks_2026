@@ -1,625 +1,1301 @@
-use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+//! # medroute
+//!
+//! Optimal solar-power allocation for medicine delivery networks.
+//!
+//! The network is a connected, directed, tripartite acyclic graph:
+//! `source -> pass-through -> destination`. Every pass-through and destination
+//! has a daily opening window `[a, b]` (whole hours, `0 <= a < b < 24`);
+//! sources are always available. Given a budget of `n` nodes, the solver picks
+//! the pass-throughs/destinations whose window should be replaced by `[0, 23]`
+//! (because they get solar power) so that the weighted time-to-delivery of the
+//! whole network is minimised.
+//!
+//! ## Model, in the order the code is organised
+//!
+//! 1. **Data types** – validated newtypes ([`Latitude`], [`Longitude`],
+//!    [`Coordinate`], [`TimeWindow`], [`Priority`], [`NodeIndex`]) and the
+//!    [`Node`] enum, whose variants make illegal states (a source with an
+//!    opening window, a pass-through with a priority, ...) unrepresentable.
+//! 2. **Graph** – [`Graph::new`] validates the structure and pre-computes, for
+//!    every destination, a [`Route`] made of [`Leg`]s (one per pass-through).
+//! 3. **Evaluation** – [`destination_time_to_delivery`],
+//!    [`average_time_to_delivery`], [`weighted_time_to_delivery`].
+//! 4. **Search** – [`exact_search`], [`greedy_search`], [`solve`].
+//! 5. **I/O** – [`parse_graph_file`], [`analyze_bytes`], [`ServerSettings`].
+//!
+//! ## Interpretation of the specification
+//!
+//! * A delivery goes `source -> pass-through -> destination` along existing
+//!   edges. Time = transit(source, pass-through) + wait for the pass-through to
+//!   open + transit(pass-through, destination) + wait for the destination to
+//!   open.
+//! * Transit time is great-circle (haversine) distance at 60 km/h.
+//! * Windows are closed intervals on a repeating 24 h clock. `[0, 23]` is taken
+//!   literally: the node is open from 00:00 to 23:00 inclusive (so arriving at
+//!   23:30 means waiting 30 min until midnight).
+//! * "At a given time" is the departure time from the source. Several
+//!   departure times may be supplied; the network objective averages over them
+//!   (default: each whole hour `0..=23`).
+//! * Only pass-throughs and destinations can be chosen (sources have no
+//!   window to replace).
 
-// ==========================================
-// 0. Constants
-// ==========================================
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::fmt;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::str::FromStr;
 
-/// Travel speed along every edge, in km/h.
-pub const TRAVEL_SPEED_KPH: f64 = 60.0;
-/// Mean Earth radius in km, used for great-circle distances.
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+/// Speed of every transit leg.
+pub const TRANSIT_SPEED_KPH: f64 = 60.0;
+/// Mean Earth radius used by the haversine formula.
 pub const EARTH_RADIUS_KM: f64 = 6371.0088;
-/// First and last (inclusive) integer start hours sampled for "business hours".
-pub const BUSINESS_START_HOUR: u32 = 9;
-pub const BUSINESS_END_HOUR: u32 = 17;
+/// Length of the repeating opening-hours clock.
+pub const HOURS_PER_DAY: f64 = 24.0;
 
-// ==========================================
-// 1. Core Domain Types
-// ==========================================
+/// Tolerance when deciding whether a clock reading lies on a window boundary.
+const CLOCK_EPSILON: f64 = 1e-9;
+/// An objective must improve by more than this to replace the incumbent.
+/// (Makes tie-breaking deterministic: earliest candidate wins.)
+const IMPROVEMENT_TOLERANCE: f64 = 1e-12;
 
-/// A strongly-typed identifier for a node to prevent accidental misuse.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct NodeId(pub usize);
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
 
-/// Represents a collection of Node Identifiers.
-#[derive(Debug, Clone, Default)]
-pub struct NodeList(pub Vec<NodeId>);
-
-/// A geographic position in decimal degrees: latitude in [-90, 90] (north positive)
-/// and longitude in [-180, 180] (east positive). Range checks happen in
-/// `TransitGraph::add_node`.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Coordinates {
-    pub lat: f64,
-    pub lon: f64,
+/// Everything that can be wrong with the *model* (values or graph structure).
+#[derive(Debug, Clone, PartialEq, Error)]
+pub enum ModelError {
+    #[error("latitude {0} must be a finite value in [-90, 90]")]
+    InvalidLatitude(f64),
+    #[error("longitude {0} must be a finite value in [-180, 180]")]
+    InvalidLongitude(f64),
+    #[error("opening window [{start}, {end}] is invalid: need 0 <= start < end < 24")]
+    InvalidWindow { start: i64, end: i64 },
+    #[error("priority {0} must be finite and non-negative")]
+    InvalidPriority(f64),
+    #[error("departure hour {0} must be finite and in [0, 24)")]
+    InvalidDepartureHour(f64),
+    #[error("at least one departure hour is required")]
+    NoDepartureHours,
+    #[error("the graph has no nodes")]
+    EmptyGraph,
+    #[error("duplicate node id `{0}`")]
+    DuplicateId(String),
+    #[error("node index {0} is out of range")]
+    IndexOutOfRange(usize),
+    #[error("edge `{from}` -> `{to}` is invalid: edges must run source -> pass-through or pass-through -> destination")]
+    InvalidEdge { from: String, to: String },
+    #[error("edge `{from}` -> `{to}` appears more than once")]
+    DuplicateEdge { from: String, to: String },
+    #[error("node `{id}` {problem}")]
+    DanglingNode { id: String, problem: &'static str },
+    #[error("the graph is not connected")]
+    Disconnected,
+    #[error("the total priority of all destinations must be greater than zero")]
+    ZeroTotalPriority,
 }
 
-impl Coordinates {
-    /// Great-circle (haversine) distance between two coordinates in kilometers,
-    /// on a spherical Earth of radius `EARTH_RADIUS_KM`.
-    pub fn distance_to(&self, other: &Coordinates) -> f64 {
-        let (lat1, lat2) = (self.lat.to_radians(), other.lat.to_radians());
-        let dlat = lat2 - lat1;
-        let dlon = (other.lon - self.lon).to_radians();
-        let a = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
-        2.0 * EARTH_RADIUS_KM * a.sqrt().min(1.0).asin()
+/// Errors while turning an uploaded file into a validated graph.
+#[derive(Debug, Clone, PartialEq, Error)]
+pub enum InputError {
+    #[error("malformed graph file: {0}")]
+    Json(String),
+    #[error("edge refers to unknown node id `{0}`")]
+    UnknownNodeId(String),
+    #[error(transparent)]
+    Model(#[from] ModelError),
+}
+
+/// Errors while searching for the best set of nodes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum SolveError {
+    #[error("n must be at least 1")]
+    ZeroSelection,
+    #[error("n = {requested} but only {available} nodes (pass-throughs and destinations) can be upgraded")]
+    TooManyNodes { requested: usize, available: usize },
+    #[error("exact search would need more than {limit} combinations; use strategy `greedy` or `auto`, or raise the limit")]
+    ExactTooLarge { limit: u64 },
+}
+
+/// Any failure of [`analyze_bytes`].
+#[derive(Debug, Clone, PartialEq, Error)]
+pub enum AnalyzeError {
+    #[error(transparent)]
+    Input(#[from] InputError),
+    #[error(transparent)]
+    Solve(#[from] SolveError),
+}
+
+// ---------------------------------------------------------------------------
+// Validated primitive types
+// ---------------------------------------------------------------------------
+
+/// Latitude in degrees, `[-90, 90]`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Latitude(f64);
+
+impl Latitude {
+    pub fn new(degrees: f64) -> Result<Self, ModelError> {
+        if degrees.is_finite() && (-90.0..=90.0).contains(&degrees) {
+            Ok(Self(degrees))
+        } else {
+            Err(ModelError::InvalidLatitude(degrees))
+        }
+    }
+
+    pub fn degrees(self) -> f64 {
+        self.0
     }
 }
 
-/// A safe wrapper for operational hours ensuring 0 <= a < b <= 24.
-/// The node is open on the half-open interval [start, end).
+/// Longitude in degrees, `[-180, 180]`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Longitude(f64);
+
+impl Longitude {
+    pub fn new(degrees: f64) -> Result<Self, ModelError> {
+        if degrees.is_finite() && (-180.0..=180.0).contains(&degrees) {
+            Ok(Self(degrees))
+        } else {
+            Err(ModelError::InvalidLongitude(degrees))
+        }
+    }
+
+    pub fn degrees(self) -> f64 {
+        self.0
+    }
+}
+
+/// A point on Earth.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Coordinate {
+    latitude: Latitude,
+    longitude: Longitude,
+}
+
+impl Coordinate {
+    pub fn new(latitude: f64, longitude: f64) -> Result<Self, ModelError> {
+        Ok(Self {
+            latitude: Latitude::new(latitude)?,
+            longitude: Longitude::new(longitude)?,
+        })
+    }
+
+    pub fn latitude(self) -> Latitude {
+        self.latitude
+    }
+
+    pub fn longitude(self) -> Longitude {
+        self.longitude
+    }
+
+    /// Great-circle (haversine) distance in kilometres.
+    pub fn distance_km(self, other: Coordinate) -> f64 {
+        let phi1 = self.latitude.degrees().to_radians();
+        let phi2 = other.latitude.degrees().to_radians();
+        let d_phi = phi2 - phi1;
+        let d_lambda = (other.longitude.degrees() - self.longitude.degrees()).to_radians();
+        let a = (d_phi / 2.0).sin().powi(2)
+            + phi1.cos() * phi2.cos() * (d_lambda / 2.0).sin().powi(2);
+        2.0 * EARTH_RADIUS_KM * a.sqrt().min(1.0).asin()
+    }
+
+    /// Transit time in hours at [`TRANSIT_SPEED_KPH`].
+    pub fn travel_hours(self, other: Coordinate) -> f64 {
+        self.distance_km(other) / TRANSIT_SPEED_KPH
+    }
+}
+
+/// Daily opening interval `[start, end]` in whole hours, `0 <= start < end < 24`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TimeInterval {
+pub struct TimeWindow {
     start: u8,
     end: u8,
 }
 
-impl TimeInterval {
-    /// Constructor that enforces domain constraints.
-    pub fn new(start: u8, end: u8) -> Result<Self, &'static str> {
-        if start < end && end <= 24 {
-            Ok(Self { start, end })
+impl TimeWindow {
+    /// What a node with solar power gets: open from 00:00 to 23:00.
+    pub const ALWAYS_OPEN: TimeWindow = TimeWindow { start: 0, end: 23 };
+
+    pub fn new(start: i64, end: i64) -> Result<Self, ModelError> {
+        if (0..24).contains(&start) && (0..24).contains(&end) && start < end {
+            // Both values are in 0..24, so the narrowing casts are lossless.
+            Ok(Self {
+                start: start as u8,
+                end: end as u8,
+            })
         } else {
-            Err("Invalid interval: must be 0 <= start < end <= 24")
+            Err(ModelError::InvalidWindow { start, end })
         }
     }
 
-    pub fn start(&self) -> u8 {
+    pub fn start(self) -> u8 {
         self.start
     }
-    pub fn end(&self) -> u8 {
+
+    pub fn end(self) -> u8 {
         self.end
     }
 
-    /// Checks if a given time (in hours) falls within the half-open interval [start, end).
-    pub fn is_open_at(&self, time: f64) -> bool {
-        time >= (self.start as f64) && time < (self.end as f64)
+    /// Hours to wait, when arriving at absolute time `clock` (hours, may exceed
+    /// 24 or be negative), until the window is next open. Zero if already open.
+    pub fn wait_hours(self, clock: f64) -> f64 {
+        let time_of_day = clock.rem_euclid(HOURS_PER_DAY);
+        let start = f64::from(self.start);
+        let end = f64::from(self.end);
+        if time_of_day >= start - CLOCK_EPSILON && time_of_day <= end + CLOCK_EPSILON {
+            0.0
+        } else if time_of_day < start {
+            start - time_of_day
+        } else {
+            HOURS_PER_DAY - time_of_day + start
+        }
     }
 }
 
-// ==========================================
-// 2. Graph Node Data
-// ==========================================
+/// Non-negative, finite destination weight.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Priority(f64);
 
-/// The "added information" for each node, encapsulating relationships,
-/// operational hours, and location.
-#[derive(Debug, Clone)]
-pub struct NodeMetadata {
-    pub parents: NodeList,
-    pub interval: TimeInterval,
-    pub coordinates: Coordinates,
+impl Priority {
+    pub fn new(value: f64) -> Result<Self, ModelError> {
+        if value.is_finite() && value >= 0.0 {
+            Ok(Self(value))
+        } else {
+            Err(ModelError::InvalidPriority(value))
+        }
+    }
+
+    pub fn value(self) -> f64 {
+        self.0
+    }
 }
 
-// ==========================================
-// 3. Graph Structure
-// ==========================================
+/// Position of a node inside a [`Graph`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct NodeIndex(usize);
 
-/// The overall Directed Acyclic Graph. Edges point parent -> child, and travel
-/// is only possible in that direction.
-#[derive(Debug, Clone, Default)]
-pub struct TransitGraph {
-    /// Maps each node identifier to its metadata.
-    nodes: HashMap<NodeId, NodeMetadata>,
+impl NodeIndex {
+    pub fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    pub fn get(self) -> usize {
+        self.0
+    }
 }
 
-impl TransitGraph {
-    pub fn new() -> Self {
-        Self { nodes: HashMap::new() }
+/// Departure times (hours in `[0, 24)`) over which the objective is averaged.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DepartureTimes(Vec<f64>);
+
+impl DepartureTimes {
+    pub fn new(hours: Vec<f64>) -> Result<Self, ModelError> {
+        if hours.is_empty() {
+            return Err(ModelError::NoDepartureHours);
+        }
+        if let Some(bad) = hours
+            .iter()
+            .copied()
+            .find(|h| !(h.is_finite() && (0.0..HOURS_PER_DAY).contains(h)))
+        {
+            return Err(ModelError::InvalidDepartureHour(bad));
+        }
+        Ok(Self(hours))
     }
 
-    /// Inserts (or replaces) a node.
-    ///
-    /// Validation: coordinates must be finite and a valid latitude/longitude, every
-    /// parent must already exist in the graph, a node cannot be its own parent, and the result must remain acyclic
-    /// (on failure the graph is left unchanged). Duplicate parents are collapsed.
-    pub fn add_node(&mut self, id: NodeId, mut meta: NodeMetadata) -> Result<(), &'static str> {
-        let c = meta.coordinates;
-        if !c.lat.is_finite() || !c.lon.is_finite() {
-            return Err("Coordinates must be finite");
-        }
-        if !(-90.0..=90.0).contains(&c.lat) || !(-180.0..=180.0).contains(&c.lon) {
-            return Err("Latitude must be in [-90, 90] and longitude in [-180, 180]");
-        }
-        let mut seen = HashSet::new();
-        meta.parents.0.retain(|p| seen.insert(*p));
-        for p in &meta.parents.0 {
-            if *p == id {
-                return Err("A node cannot be its own parent");
-            }
-            if !self.nodes.contains_key(p) {
-                return Err("Parent node does not exist");
-            }
-        }
-
-        let previous = self.nodes.insert(id, meta);
-        if !is_acyclic(&self.nodes) {
-            match previous {
-                Some(old) => {
-                    self.nodes.insert(id, old);
-                }
-                None => {
-                    self.nodes.remove(&id);
-                }
-            }
-            return Err("Insertion would create a cycle");
-        }
-        Ok(())
+    /// `0, 1, ..., 23`.
+    pub fn every_hour() -> Self {
+        Self((0..24).map(f64::from).collect())
     }
 
-    pub fn get_node(&self, id: &NodeId) -> Option<&NodeMetadata> {
-        self.nodes.get(id)
-    }
-
-    /// All node ids, sorted ascending for deterministic behaviour.
-    pub fn all_nodes(&self) -> NodeList {
-        let mut ids: Vec<NodeId> = self.nodes.keys().copied().collect();
-        ids.sort_by_key(|n| n.0);
-        NodeList(ids)
+    pub fn as_slice(&self) -> &[f64] {
+        &self.0
     }
 
     pub fn len(&self) -> usize {
-        self.nodes.len()
+        self.0.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
+        self.0.is_empty()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Nodes
+// ---------------------------------------------------------------------------
+
+/// Which part of the tripartite graph a node belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeKind {
+    Source,
+    PassThrough,
+    Destination,
+}
+
+impl fmt::Display for NodeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            NodeKind::Source => "source",
+            NodeKind::PassThrough => "pass-through",
+            NodeKind::Destination => "destination",
+        })
+    }
+}
+
+/// A graph node. Each variant carries exactly the data its role requires:
+/// `(c, None, None)`, `(c, Some(t), None)` or `(c, Some(t), Some(p))`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Node {
+    Source {
+        id: String,
+        location: Coordinate,
+    },
+    PassThrough {
+        id: String,
+        location: Coordinate,
+        window: TimeWindow,
+    },
+    Destination {
+        id: String,
+        location: Coordinate,
+        window: TimeWindow,
+        priority: Priority,
+    },
+}
+
+impl Node {
+    pub fn id(&self) -> &str {
+        match self {
+            Node::Source { id, .. } | Node::PassThrough { id, .. } | Node::Destination { id, .. } => id,
+        }
     }
 
-    /// True if the directed edge parent -> child exists.
-    pub fn has_edge(&self, parent: NodeId, child: NodeId) -> bool {
-        self.nodes
-            .get(&child)
-            .map_or(false, |m| m.parents.0.contains(&parent))
+    pub fn location(&self) -> Coordinate {
+        match self {
+            Node::Source { location, .. }
+            | Node::PassThrough { location, .. }
+            | Node::Destination { location, .. } => *location,
+        }
     }
 
-    /// Adjacency list parent -> sorted children.
-    pub fn children_map(&self) -> HashMap<NodeId, Vec<NodeId>> {
-        let mut map: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
-        for (id, meta) in &self.nodes {
-            for p in &meta.parents.0 {
-                map.entry(*p).or_default().push(*id);
-            }
+    pub fn kind(&self) -> NodeKind {
+        match self {
+            Node::Source { .. } => NodeKind::Source,
+            Node::PassThrough { .. } => NodeKind::PassThrough,
+            Node::Destination { .. } => NodeKind::Destination,
         }
-        for kids in map.values_mut() {
-            kids.sort_by_key(|n| n.0);
-        }
-        map
     }
 
-    /// True if a directed path from `from` to `to` exists (a node reaches itself).
-    pub fn has_path(&self, from: NodeId, to: NodeId) -> bool {
-        if from == to {
-            return true;
+    /// `None` for sources.
+    pub fn window(&self) -> Option<TimeWindow> {
+        match self {
+            Node::Source { .. } => None,
+            Node::PassThrough { window, .. } | Node::Destination { window, .. } => Some(*window),
         }
-        let children = self.children_map();
-        let mut seen = HashSet::new();
-        let mut stack = vec![from];
-        while let Some(n) = stack.pop() {
-            if !seen.insert(n) {
-                continue;
-            }
-            if n == to {
-                return true;
-            }
-            if let Some(kids) = children.get(&n) {
-                stack.extend(kids.iter().copied());
-            }
-        }
-        false
     }
 
-    /// Applies a single proposed change, keeping the graph a valid DAG.
-    pub fn apply_change(&mut self, change: &GraphChange) -> Result<(), &'static str> {
-        match change {
-            GraphChange::UpdateHours(id, interval) => {
-                let meta = self.nodes.get_mut(id).ok_or("Unknown node")?;
-                meta.interval = *interval;
-                Ok(())
-            }
-            GraphChange::AddEdge { parent, child } => {
-                if parent == child {
-                    return Err("Self-loops are not allowed");
-                }
-                if !self.nodes.contains_key(parent) || !self.nodes.contains_key(child) {
-                    return Err("Unknown node");
-                }
-                if self.has_edge(*parent, *child) {
-                    return Err("Edge already exists");
-                }
-                if self.has_path(*child, *parent) {
-                    return Err("Edge would create a cycle");
-                }
-                self.nodes.get_mut(child).unwrap().parents.0.push(*parent);
-                Ok(())
-            }
-            GraphChange::RemoveEdge { parent, child } => {
-                let meta = self.nodes.get_mut(child).ok_or("Unknown node")?;
-                match meta.parents.0.iter().position(|p| p == parent) {
-                    Some(pos) => {
-                        meta.parents.0.remove(pos);
-                        Ok(())
-                    }
-                    None => Err("Edge does not exist"),
-                }
-            }
+    /// `Some` only for destinations.
+    pub fn priority(&self) -> Option<Priority> {
+        match self {
+            Node::Destination { priority, .. } => Some(*priority),
+            _ => None,
         }
     }
 }
 
-/// Kahn's algorithm. Parents missing from the map are ignored.
-fn is_acyclic(nodes: &HashMap<NodeId, NodeMetadata>) -> bool {
-    let mut indegree: HashMap<NodeId, usize> = HashMap::new();
-    let mut kids: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
-    for (id, meta) in nodes {
-        let mut d = 0;
-        for p in &meta.parents.0 {
-            if nodes.contains_key(p) {
-                d += 1;
-                kids.entry(*p).or_default().push(*id);
-            }
-        }
-        indegree.insert(*id, d);
-    }
-    let mut queue: Vec<NodeId> = indegree
-        .iter()
-        .filter(|(_, &d)| d == 0)
-        .map(|(id, _)| *id)
-        .collect();
-    let mut visited = 0;
-    while let Some(n) = queue.pop() {
-        visited += 1;
-        if let Some(ks) = kids.get(&n) {
-            for k in ks {
-                let d = indegree.get_mut(k).unwrap();
-                *d -= 1;
-                if *d == 0 {
-                    queue.push(*k);
-                }
-            }
-        }
-    }
-    visited == nodes.len()
-}
+// ---------------------------------------------------------------------------
+// Graph
+// ---------------------------------------------------------------------------
 
-// ==========================================
-// 4. API & Analysis
-// ==========================================
-
-/// Represents a proposed change to the graph to optimize performance.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GraphChange {
-    /// Modify the open interval of a specific node
-    UpdateHours(NodeId, TimeInterval),
-    /// Add a new directed edge (parent -> child)
-    AddEdge { parent: NodeId, child: NodeId },
-    /// Remove an existing directed edge
-    RemoveEdge { parent: NodeId, child: NodeId },
-}
-
-/// The result returned by the optimization endpoint.
-#[derive(Debug, Clone)]
-pub struct OptimizationResult {
-    pub original_performance: f64,
-    pub optimized_performance: f64,
-    pub suggested_changes: Vec<GraphChange>,
-}
-
-/// Trait defining the core business logic for graph analysis.
-pub trait TransitAnalyzer {
-    /// Calculates the minimum transit time between two nodes starting at a given hour.
-    /// Accounts for travel time at 60 kph, business hours, and node waiting periods.
-    fn calculate_transit_time(
-        &self,
-        graph: &TransitGraph,
-        source: NodeId,
-        target: NodeId,
-        start_time: f64,
-    ) -> Option<f64>;
-
-    /// Evaluates the overall performance (average transit time) across all reachable
-    /// pairs during business hours (9 to 17).
-    fn evaluate_performance(&self, graph: &TransitGraph) -> f64;
-
-    /// Analyzes the graph to propose the optimal set of edge and hour modifications
-    /// to minimize the overall performance score (average transit time).
-    fn suggest_optimal_changes(&self, graph: &TransitGraph) -> OptimizationResult;
-}
-
-// ==========================================
-// 5. Implementation
-// ==========================================
-
-/// Priority-queue entry: min-heap on time, ties broken by node id.
+/// One way of reaching a destination: through a specific pass-through.
+///
+/// `inbound_hours` is the transit time of the *fastest* source feeding the
+/// pass-through. This is exact: sources never wait, and the "wait until open"
+/// function is non-decreasing in the arrival time, so the earliest arrival is
+/// always at least as good as any later one.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct QueueItem {
-    time: f64,
-    node: NodeId,
-}
-impl Eq for QueueItem {}
-impl Ord for QueueItem {
-    fn cmp(&self, other: &Self) -> Ordering {
-        other
-            .time
-            .total_cmp(&self.time)
-            .then_with(|| other.node.0.cmp(&self.node.0))
-    }
-}
-impl PartialOrd for QueueItem {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
+pub struct Leg {
+    pub pass_through: NodeIndex,
+    pub window: TimeWindow,
+    pub inbound_hours: f64,
+    pub outbound_hours: f64,
 }
 
-/// Time-dependent earliest-arrival Dijkstra from `source`, leaving at `start`.
-///
-/// Edge rule (u -> v, travel time T = distance / 60): the traveller may wait at u and
-/// depart at any time d >= (current time) such that u is open at d and v is open at
-/// d + T, i.e. d in [a_u, b_u) and d + T in [a_v, b_v). The earliest feasible
-/// departure is d = max(cur, a_u, a_v - T), feasible iff d < min(b_u, b_v - T).
-/// Earliest arrival is monotone in `cur` (FIFO), so Dijkstra is exact. Intervals are
-/// within one day, so no time past 24h is ever feasible and the search terminates.
-///
-/// Returns the earliest absolute arrival time at every reachable node
-/// (the source maps to `start`). If `target` is given, stops once it is settled.
-fn earliest_arrivals(
-    graph: &TransitGraph,
-    children: &HashMap<NodeId, Vec<NodeId>>,
-    source: NodeId,
-    start: f64,
-    target: Option<NodeId>,
-) -> HashMap<NodeId, f64> {
-    let mut best: HashMap<NodeId, f64> = HashMap::new();
-    if graph.get_node(&source).is_none() {
-        return best;
-    }
-    best.insert(source, start);
-    let mut heap = BinaryHeap::new();
-    heap.push(QueueItem { time: start, node: source });
-
-    while let Some(QueueItem { time, node }) = heap.pop() {
-        if best.get(&node).map_or(true, |&b| time > b) {
-            continue; // stale entry
-        }
-        if Some(node) == target {
-            break;
-        }
-        let u = match graph.get_node(&node) {
-            Some(u) => u,
-            None => continue,
-        };
-        let Some(kids) = children.get(&node) else { continue };
-        for &child in kids {
-            let Some(v) = graph.get_node(&child) else { continue };
-            let travel = u.coordinates.distance_to(&v.coordinates) / TRAVEL_SPEED_KPH;
-            let (ua, ub) = (u.interval.start() as f64, u.interval.end() as f64);
-            let (va, vb) = (v.interval.start() as f64, v.interval.end() as f64);
-            let depart = time.max(ua).max(va - travel);
-            let latest = ub.min(vb - travel);
-            if depart < latest {
-                let arrival = depart + travel;
-                if best.get(&child).map_or(true, |&b| arrival < b) {
-                    best.insert(child, arrival);
-                    heap.push(QueueItem { time: arrival, node: child });
-                }
-            }
-        }
-    }
-    best
+/// Everything needed to evaluate a single destination.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Route {
+    pub destination: NodeIndex,
+    pub window: TimeWindow,
+    pub priority: Priority,
+    pub legs: Vec<Leg>,
 }
 
-/// Aggregated transit-time samples over all (start hour, ordered pair) combinations
-/// that are reachable. Self-pairs are excluded.
-struct Stats {
-    sum: f64,
-    count: usize,
-    /// Per ordered pair: (sum of transit times over hours, number of reachable hours)
-    pairs: HashMap<(NodeId, NodeId), (f64, usize)>,
-}
-
-impl Stats {
-    fn average(&self) -> f64 {
-        if self.count == 0 {
-            0.0
-        } else {
-            self.sum / self.count as f64
-        }
-    }
-}
-
-/// Tunable limits for the greedy optimizer. Without a budget the "optimum" is
-/// trivially "open everything 24h and connect every pair", so changes are capped.
+/// A validated delivery network.
 #[derive(Debug, Clone)]
-pub struct OptimizerConfig {
-    /// Maximum number of changes in the suggestion.
-    pub max_changes: usize,
-    /// Maximum shortcut-edge candidates scored per greedy round.
-    pub max_edge_candidates: usize,
-    /// A change must lower the average by more than this to be accepted.
-    pub min_improvement: f64,
+pub struct Graph {
+    nodes: Vec<Node>,
+    edges: Vec<(NodeIndex, NodeIndex)>,
+    ids: HashMap<String, NodeIndex>,
+    routes: Vec<Route>,
+    total_priority: f64,
 }
 
-impl Default for OptimizerConfig {
+impl Graph {
+    /// Validate and build a graph.
+    ///
+    /// Rules: ids unique; edges only `source -> pass-through` and
+    /// `pass-through -> destination`, none repeated; every source has an
+    /// outgoing edge, every pass-through has both incoming and outgoing edges,
+    /// every destination has an incoming edge (so the node kinds agree with the
+    /// in/out-degree definition); weakly connected; total priority > 0.
+    pub fn new(nodes: Vec<Node>, edges: Vec<(NodeIndex, NodeIndex)>) -> Result<Self, ModelError> {
+        if nodes.is_empty() {
+            return Err(ModelError::EmptyGraph);
+        }
+
+        let mut ids = HashMap::with_capacity(nodes.len());
+        for (i, node) in nodes.iter().enumerate() {
+            if ids.insert(node.id().to_owned(), NodeIndex(i)).is_some() {
+                return Err(ModelError::DuplicateId(node.id().to_owned()));
+            }
+        }
+
+        let mut preds: Vec<Vec<NodeIndex>> = vec![Vec::new(); nodes.len()];
+        let mut succs: Vec<Vec<NodeIndex>> = vec![Vec::new(); nodes.len()];
+        let mut seen = HashSet::with_capacity(edges.len());
+        for &(from, to) in &edges {
+            let (from_node, to_node) = match (nodes.get(from.0), nodes.get(to.0)) {
+                (Some(f), Some(t)) => (f, t),
+                (None, _) => return Err(ModelError::IndexOutOfRange(from.0)),
+                (_, None) => return Err(ModelError::IndexOutOfRange(to.0)),
+            };
+            match (from_node.kind(), to_node.kind()) {
+                (NodeKind::Source, NodeKind::PassThrough)
+                | (NodeKind::PassThrough, NodeKind::Destination) => {}
+                _ => {
+                    return Err(ModelError::InvalidEdge {
+                        from: from_node.id().to_owned(),
+                        to: to_node.id().to_owned(),
+                    })
+                }
+            }
+            if !seen.insert((from, to)) {
+                return Err(ModelError::DuplicateEdge {
+                    from: from_node.id().to_owned(),
+                    to: to_node.id().to_owned(),
+                });
+            }
+            succs[from.0].push(to);
+            preds[to.0].push(from);
+        }
+
+        for (i, node) in nodes.iter().enumerate() {
+            let problem = match node.kind() {
+                NodeKind::Source if succs[i].is_empty() => Some("is a source with no outgoing edge"),
+                NodeKind::PassThrough if preds[i].is_empty() => {
+                    Some("is a pass-through with no incoming edge")
+                }
+                NodeKind::PassThrough if succs[i].is_empty() => {
+                    Some("is a pass-through with no outgoing edge")
+                }
+                NodeKind::Destination if preds[i].is_empty() => {
+                    Some("is a destination with no incoming edge")
+                }
+                _ => None,
+            };
+            if let Some(problem) = problem {
+                return Err(ModelError::DanglingNode {
+                    id: node.id().to_owned(),
+                    problem,
+                });
+            }
+        }
+
+        if !is_weakly_connected(nodes.len(), &preds, &succs) {
+            return Err(ModelError::Disconnected);
+        }
+
+        let mut routes = Vec::new();
+        let mut total_priority = 0.0;
+        for (i, node) in nodes.iter().enumerate() {
+            if let Node::Destination {
+                location,
+                window,
+                priority,
+                ..
+            } = node
+            {
+                total_priority += priority.value();
+                let mut legs = Vec::with_capacity(preds[i].len());
+                for &p in &preds[i] {
+                    if let Node::PassThrough {
+                        location: p_loc,
+                        window: p_window,
+                        ..
+                    } = &nodes[p.0]
+                    {
+                        // Non-empty by the degree check above.
+                        let inbound_hours = preds[p.0]
+                            .iter()
+                            .map(|s| nodes[s.0].location().travel_hours(*p_loc))
+                            .fold(f64::INFINITY, f64::min);
+                        legs.push(Leg {
+                            pass_through: p,
+                            window: *p_window,
+                            inbound_hours,
+                            outbound_hours: p_loc.travel_hours(*location),
+                        });
+                    }
+                }
+                routes.push(Route {
+                    destination: NodeIndex(i),
+                    window: *window,
+                    priority: *priority,
+                    legs,
+                });
+            }
+        }
+        if total_priority <= 0.0 {
+            return Err(ModelError::ZeroTotalPriority);
+        }
+
+        Ok(Self {
+            nodes,
+            edges,
+            ids,
+            routes,
+            total_priority,
+        })
+    }
+
+    pub fn nodes(&self) -> &[Node] {
+        &self.nodes
+    }
+
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub fn node(&self, index: NodeIndex) -> Option<&Node> {
+        self.nodes.get(index.0)
+    }
+
+    pub fn index_of(&self, id: &str) -> Option<NodeIndex> {
+        self.ids.get(id).copied()
+    }
+
+    pub fn edges(&self) -> &[(NodeIndex, NodeIndex)] {
+        &self.edges
+    }
+
+    /// One route per destination, in node order.
+    pub fn routes(&self) -> &[Route] {
+        &self.routes
+    }
+
+    pub fn total_priority(&self) -> f64 {
+        self.total_priority
+    }
+}
+
+/// Breadth-first search ignoring edge direction.
+pub fn is_weakly_connected(
+    node_count: usize,
+    preds: &[Vec<NodeIndex>],
+    succs: &[Vec<NodeIndex>],
+) -> bool {
+    if node_count == 0 {
+        return true;
+    }
+    let mut visited = vec![false; node_count];
+    let mut queue = VecDeque::from([0usize]);
+    visited[0] = true;
+    let mut count = 1;
+    while let Some(current) = queue.pop_front() {
+        let neighbours = preds
+            .get(current)
+            .into_iter()
+            .flatten()
+            .chain(succs.get(current).into_iter().flatten());
+        for n in neighbours {
+            if !visited[n.0] {
+                visited[n.0] = true;
+                count += 1;
+                queue.push_back(n.0);
+            }
+        }
+    }
+    count == node_count
+}
+
+// ---------------------------------------------------------------------------
+// Upgrade sets
+// ---------------------------------------------------------------------------
+
+/// A set of nodes whose window is replaced by [`TimeWindow::ALWAYS_OPEN`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpgradeSet {
+    flags: Vec<bool>,
+}
+
+impl UpgradeSet {
+    pub fn new(node_count: usize) -> Self {
+        Self {
+            flags: vec![false; node_count],
+        }
+    }
+
+    pub fn from_indices(node_count: usize, indices: &[NodeIndex]) -> Result<Self, ModelError> {
+        let mut set = Self::new(node_count);
+        for &i in indices {
+            if i.0 >= node_count {
+                return Err(ModelError::IndexOutOfRange(i.0));
+            }
+            set.flags[i.0] = true;
+        }
+        Ok(set)
+    }
+
+    pub fn contains(&self, index: NodeIndex) -> bool {
+        self.flags.get(index.0).copied().unwrap_or(false)
+    }
+
+    /// Returns `true` if the node was newly added (`false` if already present or out of range).
+    pub fn insert(&mut self, index: NodeIndex) -> bool {
+        match self.flags.get_mut(index.0) {
+            Some(flag) if !*flag => {
+                *flag = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Returns `true` if the node was present.
+    pub fn remove(&mut self, index: NodeIndex) -> bool {
+        match self.flags.get_mut(index.0) {
+            Some(flag) if *flag => {
+                *flag = false;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.flags.iter_mut().for_each(|f| *f = false);
+    }
+
+    pub fn len(&self) -> usize {
+        self.flags.iter().filter(|f| **f).count()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        !self.flags.iter().any(|f| *f)
+    }
+
+    /// Members in ascending order.
+    pub fn indices(&self) -> Vec<NodeIndex> {
+        self.flags
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| **f)
+            .map(|(i, _)| NodeIndex(i))
+            .collect()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Evaluation
+// ---------------------------------------------------------------------------
+
+fn effective_window(upgrades: &UpgradeSet, node: NodeIndex, original: TimeWindow) -> TimeWindow {
+    if upgrades.contains(node) {
+        TimeWindow::ALWAYS_OPEN
+    } else {
+        original
+    }
+}
+
+/// Fastest delivery time (hours) to one destination when leaving the sources at
+/// `departure`: the minimum over every source and pass-through that can reach it.
+pub fn destination_time_to_delivery(route: &Route, departure: f64, upgrades: &UpgradeSet) -> f64 {
+    let destination_window = effective_window(upgrades, route.destination, route.window);
+    route
+        .legs
+        .iter()
+        .map(|leg| {
+            let pass_window = effective_window(upgrades, leg.pass_through, leg.window);
+            let mut clock = departure + leg.inbound_hours;
+            clock += pass_window.wait_hours(clock);
+            clock += leg.outbound_hours;
+            clock += destination_window.wait_hours(clock);
+            clock - departure
+        })
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// Mean of [`destination_time_to_delivery`] over all departure times.
+pub fn average_time_to_delivery(
+    route: &Route,
+    departures: &DepartureTimes,
+    upgrades: &UpgradeSet,
+) -> f64 {
+    let total: f64 = departures
+        .as_slice()
+        .iter()
+        .map(|&d| destination_time_to_delivery(route, d, upgrades))
+        .sum();
+    total / departures.len() as f64
+}
+
+/// Network objective: `sum_d p_d * avg_ttd(d) / sum_d p_d`.
+pub fn weighted_time_to_delivery(
+    graph: &Graph,
+    departures: &DepartureTimes,
+    upgrades: &UpgradeSet,
+) -> f64 {
+    let weighted: f64 = graph
+        .routes()
+        .iter()
+        .map(|r| r.priority.value() * average_time_to_delivery(r, departures, upgrades))
+        .sum();
+    weighted / graph.total_priority()
+}
+
+// ---------------------------------------------------------------------------
+// Search
+// ---------------------------------------------------------------------------
+
+/// How to search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Strategy {
+    /// Exact if within the combination limit, greedy + swap search otherwise.
+    #[default]
+    Auto,
+    /// Evaluate every combination (error if above the limit).
+    Exact,
+    /// Greedy construction followed by swap local search.
+    Greedy,
+}
+
+impl FromStr for Strategy {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "auto" => Ok(Strategy::Auto),
+            "exact" => Ok(Strategy::Exact),
+            "greedy" => Ok(Strategy::Greedy),
+            other => Err(format!("unknown strategy `{other}` (expected auto, exact or greedy)")),
+        }
+    }
+}
+
+/// The algorithm that actually produced a result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SolverUsed {
+    Exact,
+    Greedy,
+}
+
+/// Solver tuning knobs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SolverConfig {
+    /// Largest `C(candidates, n)` for which exact search is allowed.
+    pub exact_max_combinations: u64,
+}
+
+impl Default for SolverConfig {
     fn default() -> Self {
-        Self { max_changes: 5, max_edge_candidates: 25, min_improvement: 1e-9 }
+        Self {
+            exact_max_combinations: 200_000,
+        }
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct GraphService {
-    pub config: OptimizerConfig,
+/// A chosen set of nodes and its objective value.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Selection {
+    /// Ascending node order.
+    pub nodes: Vec<NodeIndex>,
+    pub objective: f64,
 }
 
-impl GraphService {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn with_config(config: OptimizerConfig) -> Self {
-        Self { config }
-    }
-
-    fn stats(&self, graph: &TransitGraph) -> Stats {
-        let children = graph.children_map();
-        let ids = graph.all_nodes().0;
-        let mut stats = Stats { sum: 0.0, count: 0, pairs: HashMap::new() };
-        for hour in BUSINESS_START_HOUR..=BUSINESS_END_HOUR {
-            let start = hour as f64;
-            for &s in &ids {
-                let arrivals = earliest_arrivals(graph, &children, s, start, None);
-                // Iterate in sorted id order so float summation is deterministic.
-                for &t in &ids {
-                    if t == s {
-                        continue;
-                    }
-                    if let Some(&arr) = arrivals.get(&t) {
-                        let tt = arr - start;
-                        stats.sum += tt;
-                        stats.count += 1;
-                        let e = stats.pairs.entry((s, t)).or_insert((0.0, 0));
-                        e.0 += tt;
-                        e.1 += 1;
-                    }
-                }
-            }
-        }
-        stats
-    }
-
-    /// Candidate changes for one greedy round.
-    fn candidates(&self, graph: &TransitGraph, stats: &Stats) -> Vec<GraphChange> {
-        let mut out = Vec::new();
-        let mut seen: HashSet<(usize, u8, u8)> = HashSet::new();
-
-        // Hour candidates: extend opening hours earlier / later / to the full day.
-        for id in graph.all_nodes().0 {
-            let iv = graph.get_node(&id).unwrap().interval;
-            let (a, b) = (iv.start(), iv.end());
-            let mut options = Vec::new();
-            if a > 0 {
-                options.push((a - 1, b));
-            }
-            if b < 24 {
-                options.push((a, b + 1));
-            }
-            if a > 0 || b < 24 {
-                options.push((0, 24));
-            }
-            for (na, nb) in options {
-                if let Ok(new_iv) = TimeInterval::new(na, nb) {
-                    if seen.insert((id.0, na, nb)) {
-                        out.push(GraphChange::UpdateHours(id, new_iv));
-                    }
-                }
-            }
-        }
-
-        // Edge candidates: shortcuts between non-adjacent pairs whose direct travel
-        // time beats the current average transit time, ranked by potential saving.
-        let mut ranked: Vec<(f64, NodeId, NodeId)> = Vec::new();
-        for (&(s, t), &(sum, n)) in &stats.pairs {
-            if graph.has_edge(s, t) {
-                continue;
-            }
-            let (ms, mt) = (graph.get_node(&s).unwrap(), graph.get_node(&t).unwrap());
-            let direct = ms.coordinates.distance_to(&mt.coordinates) / TRAVEL_SPEED_KPH;
-            let saving = sum / n as f64 - direct;
-            if saving > self.config.min_improvement {
-                ranked.push((saving, s, t));
-            }
-        }
-        ranked.sort_by(|x, y| {
-            y.0.total_cmp(&x.0)
-                .then(x.1 .0.cmp(&y.1 .0))
-                .then(x.2 .0.cmp(&y.2 .0))
-        });
-        ranked.truncate(self.config.max_edge_candidates);
-        for (_, s, t) in ranked {
-            out.push(GraphChange::AddEdge { parent: s, child: t });
-        }
-        out
-    }
+/// Full result of [`solve`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct Solution {
+    pub selected: Vec<NodeIndex>,
+    pub baseline_objective: f64,
+    pub optimized_objective: f64,
+    pub solver: SolverUsed,
 }
 
-impl TransitAnalyzer for GraphService {
-    /// Minimum transit time (arrival - start_time, waiting included) from `source` to
-    /// `target` when starting at `start_time` (hours, fractional allowed).
-    /// Returns `Some(0.0)` for source == target (if the node exists) and `None` if
-    /// either node is unknown, the target is unreachable, or `start_time` is not finite.
-    fn calculate_transit_time(
-        &self,
-        graph: &TransitGraph,
-        source: NodeId,
-        target: NodeId,
-        start_time: f64,
-    ) -> Option<f64> {
-        if !start_time.is_finite() {
+/// Nodes whose window can be replaced: every pass-through and destination, in node order.
+pub fn candidates(graph: &Graph) -> Vec<NodeIndex> {
+    graph
+        .nodes()
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| n.kind() != NodeKind::Source)
+        .map(|(i, _)| NodeIndex(i))
+        .collect()
+}
+
+/// Binomial coefficient `C(n, k)`; `None` on `u64` overflow; `Some(0)` if `k > n`.
+pub fn binomial(n: u64, k: u64) -> Option<u64> {
+    if k > n {
+        return Some(0);
+    }
+    let k = k.min(n - k);
+    let mut result: u128 = 1;
+    for i in 0..k {
+        // result * (n - i) is always divisible by (i + 1) at this point.
+        result = result.checked_mul(u128::from(n - i))? / u128::from(i + 1);
+        if result > u128::from(u64::MAX) {
             return None;
         }
-        graph.get_node(&source)?;
-        graph.get_node(&target)?;
-        if source == target {
-            return Some(0.0);
+    }
+    u64::try_from(result).ok()
+}
+
+/// Advance `combination` (strictly increasing values in `0..m`) to the next one
+/// in lexicographic order. Returns `false` when it was already the last.
+pub fn next_combination(combination: &mut [usize], m: usize) -> bool {
+    let k = combination.len();
+    if k == 0 || m < k {
+        return false;
+    }
+    let mut i = k;
+    while i > 0 {
+        i -= 1;
+        if combination[i] < m - k + i {
+            combination[i] += 1;
+            for j in i + 1..k {
+                combination[j] = combination[j - 1] + 1;
+            }
+            return true;
         }
-        let children = graph.children_map();
-        let arrivals = earliest_arrivals(graph, &children, source, start_time, Some(target));
-        arrivals.get(&target).map(|&arr| arr - start_time)
     }
+    false
+}
 
-    /// Average transit time over every ordered pair of distinct nodes that is
-    /// reachable, sampled at each integer start hour 9..=17. (hour, pair) samples
-    /// that are unreachable are excluded. Returns 0.0 if there are no such samples.
-    fn evaluate_performance(&self, graph: &TransitGraph) -> f64 {
-        self.stats(graph).average()
+fn validate_n(graph: &Graph, n: usize) -> Result<Vec<NodeIndex>, SolveError> {
+    if n == 0 {
+        return Err(SolveError::ZeroSelection);
     }
+    let cands = candidates(graph);
+    if n > cands.len() {
+        return Err(SolveError::TooManyNodes {
+            requested: n,
+            available: cands.len(),
+        });
+    }
+    Ok(cands)
+}
 
-    /// Greedy optimizer. Each round scores every candidate change (hour extensions and
-    /// shortcut edges) by re-evaluating performance, then applies the best one.
-    /// A candidate is only accepted if it (a) does not reduce the number of reachable
-    /// (hour, pair) samples, so connectivity can't be "optimized away", and (b) lowers
-    /// the average by more than `min_improvement`. Stops after `max_changes` or when
-    /// no candidate helps. Applying `suggested_changes` in order to the input graph
-    /// yields a graph whose performance equals `optimized_performance`.
-    fn suggest_optimal_changes(&self, graph: &TransitGraph) -> OptimizationResult {
-        let mut current = graph.clone();
-        let mut cur_stats = self.stats(&current);
-        let original = cur_stats.average();
-        let mut changes = Vec::new();
+/// Evaluate every `n`-subset of candidates; ties go to the lexicographically first.
+pub fn exact_search(
+    graph: &Graph,
+    departures: &DepartureTimes,
+    n: usize,
+) -> Result<Selection, SolveError> {
+    let cands = validate_n(graph, n)?;
+    let m = cands.len();
+    let mut combination: Vec<usize> = (0..n).collect();
+    let mut set = UpgradeSet::new(graph.node_count());
 
-        if cur_stats.count > 0 {
-            for _ in 0..self.config.max_changes {
-                let mut best: Option<(GraphChange, TransitGraph, Stats)> = None;
-                for cand in self.candidates(&current, &cur_stats) {
-                    let mut g = current.clone();
-                    if g.apply_change(&cand).is_err() {
-                        continue;
-                    }
-                    let s = self.stats(&g);
-                    if s.count < cur_stats.count {
-                        continue;
-                    }
-                    if s.average() > cur_stats.average() - self.config.min_improvement {
-                        continue;
-                    }
-                    // Scores within 1e-12 are ties (floating-point noise); keep the earlier candidate.
-                    if best.as_ref().map_or(true, |(_, _, b)| s.average() < b.average() - 1e-12) {
-                        best = Some((cand, g, s));
-                    }
-                }
-                match best {
-                    Some((c, g, s)) => {
-                        changes.push(c);
-                        current = g;
-                        cur_stats = s;
-                    }
-                    None => break,
-                }
+    let evaluate = |combination: &[usize], set: &mut UpgradeSet| {
+        set.clear();
+        for &i in combination {
+            set.insert(cands[i]);
+        }
+        weighted_time_to_delivery(graph, departures, set)
+    };
+
+    let mut best_combination = combination.clone();
+    let mut best_objective = evaluate(&combination, &mut set);
+    while next_combination(&mut combination, m) {
+        let objective = evaluate(&combination, &mut set);
+        if objective < best_objective - IMPROVEMENT_TOLERANCE {
+            best_objective = objective;
+            best_combination.clone_from(&combination);
+        }
+    }
+    Ok(Selection {
+        nodes: best_combination.into_iter().map(|i| cands[i]).collect(),
+        objective: best_objective,
+    })
+}
+
+/// Greedy construction (add the node with the best marginal gain `n` times)
+/// followed by a swap local search until no single swap improves the objective.
+pub fn greedy_search(
+    graph: &Graph,
+    departures: &DepartureTimes,
+    n: usize,
+) -> Result<Selection, SolveError> {
+    let cands = validate_n(graph, n)?;
+    let mut set = UpgradeSet::new(graph.node_count());
+    let mut chosen: Vec<NodeIndex> = Vec::with_capacity(n);
+
+    for _ in 0..n {
+        let mut best: Option<(NodeIndex, f64)> = None;
+        for &c in &cands {
+            if set.contains(c) {
+                continue;
+            }
+            set.insert(c);
+            let objective = weighted_time_to_delivery(graph, departures, &set);
+            set.remove(c);
+            if best.is_none_or(|(_, b)| objective < b - IMPROVEMENT_TOLERANCE) {
+                best = Some((c, objective));
             }
         }
-
-        OptimizationResult {
-            original_performance: original,
-            optimized_performance: cur_stats.average(),
-            suggested_changes: changes,
+        if let Some((c, _)) = best {
+            set.insert(c);
+            chosen.push(c);
         }
+    }
+
+    let mut current = weighted_time_to_delivery(graph, departures, &set);
+    loop {
+        let mut improved = false;
+        #[allow(clippy::needless_range_loop)] // `chosen[position]` is replaced inside the loop
+        'scan: for position in 0..chosen.len() {
+            let removed = chosen[position];
+            for &c in &cands {
+                if set.contains(c) {
+                    continue;
+                }
+                set.remove(removed);
+                set.insert(c);
+                let objective = weighted_time_to_delivery(graph, departures, &set);
+                if objective < current - IMPROVEMENT_TOLERANCE {
+                    chosen[position] = c;
+                    current = objective;
+                    improved = true;
+                    break 'scan;
+                }
+                set.remove(c);
+                set.insert(removed);
+            }
+        }
+        if !improved {
+            break;
+        }
+    }
+
+    chosen.sort_unstable();
+    Ok(Selection {
+        nodes: chosen,
+        objective: current,
+    })
+}
+
+/// Pick `n` nodes to upgrade, using the requested strategy.
+pub fn solve(
+    graph: &Graph,
+    departures: &DepartureTimes,
+    n: usize,
+    strategy: Strategy,
+    config: &SolverConfig,
+) -> Result<Solution, SolveError> {
+    let cands = validate_n(graph, n)?;
+    let within_limit = binomial(cands.len() as u64, n as u64)
+        .is_some_and(|c| c <= config.exact_max_combinations);
+
+    let solver = match (strategy, within_limit) {
+        (Strategy::Exact, false) => {
+            return Err(SolveError::ExactTooLarge {
+                limit: config.exact_max_combinations,
+            })
+        }
+        (Strategy::Exact, true) | (Strategy::Auto, true) => SolverUsed::Exact,
+        (Strategy::Greedy, _) | (Strategy::Auto, false) => SolverUsed::Greedy,
+    };
+    let selection = match solver {
+        SolverUsed::Exact => exact_search(graph, departures, n)?,
+        SolverUsed::Greedy => greedy_search(graph, departures, n)?,
+    };
+    let baseline_objective =
+        weighted_time_to_delivery(graph, departures, &UpgradeSet::new(graph.node_count()));
+    Ok(Solution {
+        selected: selection.nodes,
+        baseline_objective,
+        optimized_objective: selection.objective,
+        solver,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// File format
+// ---------------------------------------------------------------------------
+
+/// Top-level uploaded JSON document.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GraphFile {
+    pub nodes: Vec<NodeRecord>,
+    pub edges: Vec<EdgeRecord>,
+    /// Optional departure hours (each in `[0, 24)`); defaults to `0..=23`.
+    pub departure_hours: Option<Vec<f64>>,
+}
+
+/// One node as written in the file.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum NodeRecord {
+    Source {
+        id: String,
+        latitude: f64,
+        longitude: f64,
+    },
+    PassThrough {
+        id: String,
+        latitude: f64,
+        longitude: f64,
+        open_from: i64,
+        open_until: i64,
+    },
+    Destination {
+        id: String,
+        latitude: f64,
+        longitude: f64,
+        open_from: i64,
+        open_until: i64,
+        priority: f64,
+    },
+}
+
+/// One directed edge as written in the file.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EdgeRecord {
+    pub from: String,
+    pub to: String,
+}
+
+impl NodeRecord {
+    /// Validate the raw values and build a [`Node`].
+    pub fn into_node(self) -> Result<Node, ModelError> {
+        match self {
+            NodeRecord::Source {
+                id,
+                latitude,
+                longitude,
+            } => Ok(Node::Source {
+                id,
+                location: Coordinate::new(latitude, longitude)?,
+            }),
+            NodeRecord::PassThrough {
+                id,
+                latitude,
+                longitude,
+                open_from,
+                open_until,
+            } => Ok(Node::PassThrough {
+                id,
+                location: Coordinate::new(latitude, longitude)?,
+                window: TimeWindow::new(open_from, open_until)?,
+            }),
+            NodeRecord::Destination {
+                id,
+                latitude,
+                longitude,
+                open_from,
+                open_until,
+                priority,
+            } => Ok(Node::Destination {
+                id,
+                location: Coordinate::new(latitude, longitude)?,
+                window: TimeWindow::new(open_from, open_until)?,
+                priority: Priority::new(priority)?,
+            }),
+        }
+    }
+}
+
+/// A validated graph plus the departure times to evaluate it at.
+#[derive(Debug, Clone)]
+pub struct ParsedInput {
+    pub graph: Graph,
+    pub departures: DepartureTimes,
+}
+
+impl GraphFile {
+    /// Validate everything and build the graph.
+    pub fn into_input(self) -> Result<ParsedInput, InputError> {
+        let mut nodes = Vec::with_capacity(self.nodes.len());
+        for record in self.nodes {
+            nodes.push(record.into_node()?);
+        }
+
+        let mut by_id: HashMap<&str, NodeIndex> = HashMap::with_capacity(nodes.len());
+        for (i, node) in nodes.iter().enumerate() {
+            by_id.entry(node.id()).or_insert(NodeIndex(i));
+        }
+        let mut edges = Vec::with_capacity(self.edges.len());
+        for edge in &self.edges {
+            let from = by_id
+                .get(edge.from.as_str())
+                .copied()
+                .ok_or_else(|| InputError::UnknownNodeId(edge.from.clone()))?;
+            let to = by_id
+                .get(edge.to.as_str())
+                .copied()
+                .ok_or_else(|| InputError::UnknownNodeId(edge.to.clone()))?;
+            edges.push((from, to));
+        }
+
+        let departures = match self.departure_hours {
+            Some(hours) => DepartureTimes::new(hours)?,
+            None => DepartureTimes::every_hour(),
+        };
+        Ok(ParsedInput {
+            graph: Graph::new(nodes, edges)?,
+            departures,
+        })
+    }
+}
+
+/// Parse the bytes of an uploaded file (JSON) into a validated [`ParsedInput`].
+pub fn parse_graph_file(bytes: &[u8]) -> Result<ParsedInput, InputError> {
+    let file: GraphFile =
+        serde_json::from_slice(bytes).map_err(|e| InputError::Json(e.to_string()))?;
+    file.into_input()
+}
+
+/// Body of a successful `/api/analyze` response.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AnalyzeResponse {
+    /// Ids of the nodes to switch to `[0, 23]`.
+    pub selected: Vec<String>,
+    pub n: usize,
+    pub solver: SolverUsed,
+    pub baseline_weighted_hours: f64,
+    pub optimized_weighted_hours: f64,
+}
+
+/// Convert a [`Solution`] into the ids-based response.
+pub fn build_response(graph: &Graph, n: usize, solution: &Solution) -> AnalyzeResponse {
+    AnalyzeResponse {
+        selected: solution
+            .selected
+            .iter()
+            .filter_map(|i| graph.node(*i))
+            .map(|node| node.id().to_owned())
+            .collect(),
+        n,
+        solver: solution.solver,
+        baseline_weighted_hours: solution.baseline_objective,
+        optimized_weighted_hours: solution.optimized_objective,
+    }
+}
+
+/// The whole pipeline behind `/api/analyze`: parse, validate, solve, report.
+pub fn analyze_bytes(
+    bytes: &[u8],
+    n: usize,
+    strategy: Strategy,
+    config: &SolverConfig,
+) -> Result<AnalyzeResponse, AnalyzeError> {
+    let input = parse_graph_file(bytes)?;
+    let solution = solve(&input.graph, &input.departures, n, strategy, config)?;
+    Ok(build_response(&input.graph, n, &solution))
+}
+
+// ---------------------------------------------------------------------------
+// Server settings (environment variables; no recompilation needed)
+// ---------------------------------------------------------------------------
+
+pub const ENV_HOST: &str = "MEDROUTE_HOST";
+pub const ENV_PORT: &str = "MEDROUTE_PORT";
+pub const ENV_MAX_UPLOAD_BYTES: &str = "MEDROUTE_MAX_UPLOAD_BYTES";
+pub const ENV_EXACT_MAX_COMBINATIONS: &str = "MEDROUTE_EXACT_MAX_COMBINATIONS";
+
+/// A malformed environment variable.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error("environment variable {name}=`{value}` is invalid: expected {expected}")]
+pub struct SettingsError {
+    pub name: &'static str,
+    pub value: String,
+    pub expected: &'static str,
+}
+
+/// Runtime configuration of the server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServerSettings {
+    pub host: IpAddr,
+    pub port: u16,
+    pub max_upload_bytes: usize,
+    pub solver: SolverConfig,
+}
+
+impl Default for ServerSettings {
+    fn default() -> Self {
+        Self {
+            host: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port: 8080,
+            max_upload_bytes: 10 * 1024 * 1024,
+            solver: SolverConfig::default(),
+        }
+    }
+}
+
+fn parse_setting<T: FromStr, F: Fn(&str) -> Option<String>>(
+    lookup: &F,
+    name: &'static str,
+    expected: &'static str,
+    default: T,
+) -> Result<T, SettingsError> {
+    match lookup(name) {
+        None => Ok(default),
+        Some(value) => value.trim().parse().map_err(|_| SettingsError {
+            name,
+            value,
+            expected,
+        }),
+    }
+}
+
+impl ServerSettings {
+    /// Build settings from any variable lookup (used by tests).
+    pub fn from_lookup<F: Fn(&str) -> Option<String>>(lookup: F) -> Result<Self, SettingsError> {
+        let d = Self::default();
+        Ok(Self {
+            host: parse_setting(&lookup, ENV_HOST, "an IP address", d.host)?,
+            port: parse_setting(&lookup, ENV_PORT, "a port number 0-65535", d.port)?,
+            max_upload_bytes: parse_setting(
+                &lookup,
+                ENV_MAX_UPLOAD_BYTES,
+                "a positive integer",
+                d.max_upload_bytes,
+            )?,
+            solver: SolverConfig {
+                exact_max_combinations: parse_setting(
+                    &lookup,
+                    ENV_EXACT_MAX_COMBINATIONS,
+                    "a non-negative integer",
+                    d.solver.exact_max_combinations,
+                )?,
+            },
+        })
+    }
+
+    /// Build settings from the process environment.
+    pub fn from_env() -> Result<Self, SettingsError> {
+        Self::from_lookup(|name| std::env::var(name).ok())
+    }
+
+    pub fn socket_addr(&self) -> SocketAddr {
+        SocketAddr::new(self.host, self.port)
     }
 }

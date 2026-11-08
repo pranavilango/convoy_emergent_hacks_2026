@@ -1,44 +1,30 @@
 [package]
-name = "transit"
+name = "medroute"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
-description = "Time-dependent transit analysis and optimization over a DAG of nodes with opening hours and coordinates."
+description = "Solar-power allocator for medicine delivery networks in electricity-insecure regions"
 license = "MIT"
-keywords = ["graph", "dag", "transit", "shortest-path", "dijkstra"]
-categories = ["algorithms", "data-structures"]
-publish = false
 
 [lib]
-name = "transit"
+name = "medroute"
 path = "src/lib.rs"
 
 [[bin]]
-name = "transit-server"
+name = "medroute"
 path = "src/main.rs"
 
-# The analysis library itself uses only std; these are for the HTTP server binary.
+[[test]]
+name = "tests"
+path = "tests/tests.rs"
+
 [dependencies]
-axum = "0.7"
+axum = { version = "0.7", default-features = false, features = ["http1", "json", "multipart", "query", "tokio"] }
+dotenvy = "0.15"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "fs", "sync"] }
-
-[dev-dependencies]
-tower = { version = "0.5", features = ["util"] }
-
-[[test]]
-name = "transit_tests"
-path = "tests/transit_tests.rs"
-
-[profile.dev]
-opt-level = 0
-
-# The property tests run many Dijkstra passes; optimizing them keeps `cargo test` fast.
-[profile.test]
-opt-level = 2
+thiserror = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
 
 [profile.release]
-opt-level = 3
 lto = true
 codegen-units = 1

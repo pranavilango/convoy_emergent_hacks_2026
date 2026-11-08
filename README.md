@@ -1,122 +1,131 @@
-# transit
+# medroute — solar-power allocator for medicine delivery
 
-Time-dependent transit analysis over a directed acyclic graph of nodes that have opening
-hours and coordinates, plus an HTTP API for storing networks and finding changes that
-reduce average transit time.
+In regions with unreliable electricity, clinics and relay hubs that store
+medicine (cold chain, intake, dispensing) are only open for a few hours a day.
+Given a delivery network and a budget of `n` solar installations, **medroute
+finds the `n` nodes that, when kept open from 00:00 to 23:00, minimise the
+priority-weighted time it takes medicine to reach clinics.**
 
-- **Library** (`src/lib.rs`): graph types, earliest-arrival transit times, performance
-  evaluation, and a greedy optimizer.
-- **Server** (`src/main.rs`): the `transit-server` binary exposing `/api/upload`,
-  `/api/analyze` and `/api/change`.
-- **API reference:** see [`API.md`](API.md) for the file format, request/response formats and errors.
+It is a Rust library (the algorithm) plus a small HTTP server
+(`POST /api/analyze`).
 
-## Quick start
+## The problem
 
-Requires Rust 1.75 or newer.
+* A connected, directed, acyclic, tripartite graph: **sources** (in-degree 0)
+  → **pass-throughs** → **destinations** (out-degree 0).
+* Each node holds `(c, option<t>, option<p>)`: location `c`; opening window
+  `t = [a, b]`, `0 ≤ a < b < 24` (none for sources); priority `p` (destinations
+  only).
+* Time-to-delivery = transit(source→pass-through) + wait for pass-through +
+  transit(pass-through→destination) + wait for destination; transit is
+  straight-line distance at 60 km/h.
+* Per destination: minimum over all sources/pass-throughs. Network:
+  `Σ pᵢ·ttdᵢ / Σ pᵢ`.
+* Choose `n` nodes whose window becomes `[0, 23]` to minimise that value.
 
-```sh
-cargo run --release --bin transit-server
-# transit-server listening on http://127.0.0.1:3000 (storage: networks)
+Interpretation choices (the statement is ambiguous in places) are listed in
+[`src/lib.rs`](src/lib.rs) and [`API.md`](API.md): deliveries follow graph
+edges; distance is haversine; "at a given time" is the departure time, averaged
+over `departure_hours` (default every whole hour); `[0, 23]` is taken literally
+(closed, so 23:30 is *not* open); only pass-throughs and destinations are
+upgradable because sources have no window.
+
+## Design
+
+Types first, so invalid states cannot be represented:
+
+| Type | Guarantees |
+|------|-----------|
+| `Latitude`, `Longitude`, `Coordinate` | finite, in range |
+| `TimeWindow` | `0 ≤ start < end < 24`; owns the "wait until open" logic |
+| `Priority` | finite, non-negative |
+| `NodeIndex` | index into one graph (no raw `usize` mixing) |
+| `Node` (enum) | `Source` / `PassThrough` / `Destination` carry exactly the fields they need |
+| `Graph` | only built via `Graph::new`, which checks layering, degrees, connectivity, positive total priority and pre-computes one `Route` (list of `Leg`s) per destination |
+| `UpgradeSet` | which nodes are `[0, 23]` |
+| `Strategy` / `SolverUsed` | request vs. what actually ran |
+
+There are no overloaded/catch-all types: no `Option` pairs standing in for
+roles, no stringly-typed kinds past the parser, and distinct error enums
+(`ModelError`, `InputError`, `SolveError`, `AnalyzeError`).
+
+Algorithm (`src/lib.rs`):
+
+1. **Evaluation** — `destination_time_to_delivery` → `average_time_to_delivery`
+   → `weighted_time_to_delivery`. Because waiting-until-open is monotone in
+   arrival time and sources never wait, only the *fastest source per
+   pass-through* matters, so each evaluation is `O(destinations × departures ×
+   pass-throughs per destination)`.
+2. **Search** — `exact_search` enumerates all `C(m, n)` subsets of the `m`
+   upgradable nodes (guaranteed optimal). `greedy_search` adds the best node `n`
+   times, then applies single-node swaps until none improves. `solve` picks
+   between them (`auto` = exact when `C(m, n)` ≤ `MEDROUTE_EXACT_MAX_COMBINATIONS`).
+   The problem is not submodular in general, so greedy is a heuristic.
+3. **I/O** — `parse_graph_file`, `analyze_bytes`, `ServerSettings`.
+
+`src/main.rs` is only HTTP glue (axum); the CPU-bound search runs on a blocking
+thread.
+
+## Running
+
+Requires a recent stable Rust toolchain (1.85+ at the time of writing).
+
+```bash
+cargo run --release
+# in another shell
+curl -F file=@examples/network.json "http://127.0.0.1:8080/api/analyze?n=2"
 ```
 
-Upload a network, then ask for improvements:
+Format and error details: [`API.md`](API.md).
 
-```sh
-curl -X POST localhost:3001/api/upload -H 'Content-Type: application/json' -d '{
-  "network_name": "demo",
-  "content": {"nodes": [
-    {"id": 0, "hours": {"start": 0, "end": 24}, "coordinates": {"x": 0,  "y": 0}},
-    {"id": 1, "parents": [0], "hours": {"start": 0, "end": 24}, "coordinates": {"x": 0,  "y": 60}},
-    {"id": 2, "parents": [1], "hours": {"start": 0, "end": 24}, "coordinates": {"x": 60, "y": 0}}
-  ]}
-}'
+## Configuration (no recompilation needed)
 
-curl -X POST localhost:3001/api/analyze -H 'Content-Type: application/json' \
-  -d '{"network_name": "demo"}'
-# {"network_name":"demo","original_performance":1.609...,"optimized_performance":1.138...,
-#  "suggested_changes":[{"type":"add_edge","parent":0,"child":2}]}
+Read at start-up from environment variables; a `.env` file in the working
+directory is loaded too (real environment variables win). Copy
+`.env.example` to `.env` to start.
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `MEDROUTE_HOST` | `127.0.0.1` | Bind address (`0.0.0.0` to expose on all interfaces; IPv6 allowed). |
+| `MEDROUTE_PORT` | `8080` | TCP port. |
+| `MEDROUTE_MAX_UPLOAD_BYTES` | `10485760` (10 MiB) | Largest accepted upload; larger gets `413`. |
+| `MEDROUTE_EXACT_MAX_COMBINATIONS` | `200000` | Max `C(m, n)` for exact search. Raise for guaranteed optimality on bigger inputs (slower), lower to answer faster with the heuristic. |
+
+```bash
+MEDROUTE_PORT=9000 MEDROUTE_HOST=0.0.0.0 ./target/release/medroute
 ```
 
-## Configuration
+An invalid value makes the server exit with a message naming the variable.
 
-The server is configured only through environment variables, which are read at startup in
-`main()` in `src/main.rs`. There is no config file, and `.env` files are not loaded
-automatically.
+## Testing
 
-| Variable              | Default          | Meaning                                              |
-|-----------------------|------------------|------------------------------------------------------|
-| `TRANSIT_ADDR`        | `127.0.0.1:3000` | Socket address to listen on. Use `0.0.0.0:3000` to accept outside connections |
-| `TRANSIT_STORAGE_DIR` | `./networks`     | Directory holding network files (created if missing) |
-| `TRANSIT_MAX_NODES`   | `100`            | Maximum nodes per network, enforced on upload and `add_node` |
-
-Example:
-
-```sh
-TRANSIT_ADDR=0.0.0.0:8080 TRANSIT_STORAGE_DIR=/var/lib/transit TRANSIT_MAX_NODES=50 \
-  ./target/release/transit-server
-```
-
-Invalid values (an unparsable address, a non-numeric node limit) make the server exit at
-startup with a message naming the variable.
-
-The default `TRANSIT_MAX_NODES` is conservative because analysis time grows steeply with
-network size (about 8 s for 100 nodes and 48 s for 200 with `max_changes: 5`; see
-[`API.md`](API.md#limits-and-performance)). The server has **no authentication**, so keep it on a
-trusted network or behind an authenticating proxy, especially if you change `TRANSIT_ADDR`.
-
-## Storage
-
-Each network is one file, `<TRANSIT_STORAGE_DIR>/<network_name>.json`. Files are written
-atomically, and you can also drop hand-written files into the directory; they are read on
-demand. Network names are limited to 1–64 characters from `A-Z a-z 0-9 - _`.
-
-## Project layout
-
-```
-Cargo.toml            package manifest (library + transit-server binary)
-Cargo.lock            pinned dependencies (keep this; see Notes)
-API.md                file format and API reference
-src/lib.rs            analysis library
-src/main.rs           HTTP server (types, conversions, operations, handlers, API tests)
-tests/transit_tests.rs  library test suite
-```
-
-## Tests
-
-```sh
+```bash
 cargo test
 ```
 
-This runs the library tests (`tests/transit_tests.rs`, 43 tests, including property tests on
-random graphs checked against an independent reference implementation) and the API tests in
-`src/main.rs` (18 tests that drive the real router against a temporary storage directory).
+`tests/tests.rs` (113 tests) covers every public function:
 
-## Using the library directly
+* primitives (validation, haversine distances, window wait-time table,
+  boundary and wrap-around cases);
+* graph validation (every error variant) and route pre-computation;
+* evaluation with hand-computed expectations (zero-transit scenarios where the
+  answer follows from the windows alone), min-over-sources/pass-throughs,
+  priorities and departure averaging;
+* combinatorics helpers, exact search vs. an independent bit-mask brute force on
+  random graphs, greedy sanity bounds, tie-breaking, strategy selection;
+* file parsing and every input error path, settings parsing;
+* end-to-end HTTP tests that launch the real binary on a free port: success
+  paths, each error status, and environment-variable behaviour (limits,
+  invalid config, port in use).
 
-```rust
-use transit::*;
+## Layout
 
-let mut graph = TransitGraph::new();
-graph.add_node(NodeId(0), NodeMetadata {
-    parents: NodeList(vec![]),
-    interval: TimeInterval::new(0, 24).unwrap(),
-    coordinates: Coordinates(0.0, 0.0),
-})?;
-
-let service = GraphService::default();
-let hours = service.calculate_transit_time(&graph, NodeId(0), NodeId(1), 9.0);
-let score = service.evaluate_performance(&graph);
-let plan = service.suggest_optimal_changes(&graph);
 ```
-
-Key semantics: edges run parent to child, coordinates are in km, travel is 60 km/h, nodes are
-open on `[start, end)`, waiting is allowed, and performance averages transit time over the
-reachable ordered pairs at start hours 9 through 17. Details are in `API.md` and the doc
-comments in `src/lib.rs`.
-
-## Notes
-
-- `Cargo.lock` pins `tokio` and `hyper-util` to older releases so the project builds on
-  Rust 1.75. On a newer toolchain you can run `cargo update` to take the latest versions.
-- The optimizer is greedy and capped by `max_changes`, so its output is a good set of
-  changes, not a proven optimum.
+Cargo.toml          manifest (Cargo requires this exact capitalisation)
+src/lib.rs          types, graph validation, evaluation, search, parsing, settings
+src/main.rs         HTTP server
+tests/tests.rs      unit + end-to-end tests
+examples/           sample network
+API.md              request/response reference
+.env.example        configuration template
+```
