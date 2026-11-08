@@ -2,7 +2,8 @@ import { cn } from "@/lib/utils";
 
 /**
  * The Convoy logo mark: a trapezium body, wide at the top, on two wheels, all in white. Drawn on
- * a 32×24 grid; src/app/icon.svg is the same drawing (on a black tile) for the browser tab.
+ * a 32×24 grid. The browser-tab icon (src/app/icon.svg) is the same drawing in navy with a thin
+ * black outline.
  */
 export function ConvoyMark({ className }: { className?: string }) {
   return (

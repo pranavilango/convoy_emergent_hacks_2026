@@ -150,8 +150,12 @@ describe("solar allocation analysis", () => {
 
     fireEvent.click(analyzeButton);
     expect(await screen.findByRole("dialog", { name: "Network analysis" })).toBeInTheDocument();
-    expect(await screen.findByText("These sites reduce modeled delivery times.")).toBeInTheDocument();
-    expect(screen.getByText(/exact solver selected 2 of 2 requested solar units/)).toBeInTheDocument();
+    expect(
+      await screen.findByText("These sites reduce modeled delivery times."),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Convoy selected 2 of 2 requested solar units/)).toBeInTheDocument();
+    // The popup never names the search strategy (exact vs. greedy).
+    expect(screen.getByRole("dialog").textContent).not.toMatch(/solver|exact|greedy/i);
     expect(screen.getByText("Mwanza Clinic")).toBeInTheDocument();
     expect(screen.getByText("Central Store")).toBeInTheDocument();
     expect(screen.getByText(/21\.64 h before upgrades/)).toBeInTheDocument();

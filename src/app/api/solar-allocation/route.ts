@@ -79,7 +79,10 @@ export async function POST(request: Request) {
         (error instanceof Error && ["AbortError", "TimeoutError"].includes(error.name)))
     ) {
       return Response.json(
-        { error: "Could not reach Gemini to explain the allocation. Check server network access and try again." },
+        {
+          error:
+            "Could not reach Gemini to explain the allocation. Check server network access and try again.",
+        },
         { status: 502 },
       );
     }

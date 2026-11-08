@@ -124,8 +124,8 @@ export function AllocationAnalysisDialog({
                 _Selected 24/7 sites
               </h3>
               <p className="mt-2 text-sm leading-relaxed">
-                The {result.allocation.solver} solver selected {result.allocation.selected.length}{" "}
-                of {result.allocation.n} requested solar units.
+                Convoy selected {result.allocation.selected.length} of {result.allocation.n}{" "}
+                requested solar units.
               </p>
               <ol className="mt-4 divide-y divide-foreground/20 border-y border-foreground/20">
                 {result.allocation.selected.map((id) => {

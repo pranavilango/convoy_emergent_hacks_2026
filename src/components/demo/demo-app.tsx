@@ -237,7 +237,9 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
           </p>
         )}
         {affordableSolarUnits === null ? (
-          <p className="text-xs opacity-70">Enter the solar unit cost and total budget to analyze.</p>
+          <p className="text-xs opacity-70">
+            Enter the solar unit cost and total budget to analyze.
+          </p>
         ) : affordableSolarUnits < 1 ? (
           <p className="text-xs opacity-70">The budget must cover at least one solar unit.</p>
         ) : null}
