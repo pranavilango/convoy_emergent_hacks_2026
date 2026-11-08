@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   distanceKm,
   formatDistance,
+  letterSize,
   pointBeforeEnd,
   screenDistance,
+  squareSize,
   visualMidpoint,
 } from "@/lib/demo/geometry";
 import {
@@ -25,6 +27,12 @@ import {
   summarizeHours,
 } from "@/lib/demo/hours";
 import { canSupply, kindLabel, LOCATION_KINDS, type LocationKind } from "@/lib/demo/kinds";
+import {
+  formatPopulation,
+  parsePopulation,
+  peopleLabel,
+  populationError,
+} from "@/lib/demo/population";
 import { connectionsBrokenByKind, INITIAL_STATE, parseState, reducer } from "@/lib/demo/reducer";
 import type { DemoState, NewLocation } from "@/lib/demo/types";
 
@@ -37,6 +45,7 @@ const site = (kind: LocationKind, overrides: Partial<NewLocation> = {}): NewLoca
   kind,
   portMode: kind === "port" ? "sea" : null,
   hours: cloneHours(DEFAULT_HOURS),
+  population: kind === "clinic" ? 1200 : null,
   ...overrides,
 });
 
@@ -117,6 +126,53 @@ describe("adding locations", () => {
   it("falls back to the address when a location has no name", () => {
     const s = add(INITIAL_STATE, "c", site("clinic", { name: "  " }));
     expect(s.locations[0]?.name).toBe("1 Harbour Rd");
+  });
+});
+
+describe("clinic population", () => {
+  it("requires a whole, positive population for new clinics", () => {
+    expect(add(INITIAL_STATE, "c", site("clinic")).locations[0]?.population).toBe(1200);
+    for (const population of [null, 0, -5, 1.5, NaN, 100_000_001]) {
+      expect(add(INITIAL_STATE, "c", site("clinic", { population }))).toBe(INITIAL_STATE);
+    }
+  });
+
+  it("drops a population given to a port or warehouse", () => {
+    const s = add(INITIAL_STATE, "w", site("warehouse", { population: 500 }));
+    expect(s.locations[0]?.population).toBeNull();
+  });
+
+  it("updates a clinic's population, and refuses it for other kinds or bad values", () => {
+    const s = network();
+    expect(
+      reducer(s, { type: "updateLocation", id: "c", population: 45_000 }).locations[3]?.population,
+    ).toBe(45_000);
+    expect(reducer(s, { type: "updateLocation", id: "w1", population: 10 })).toBe(s);
+    expect(reducer(s, { type: "updateLocation", id: "c", population: 0 })).toBe(s);
+  });
+
+  it("clears the population when a clinic changes kind, and starts unset when one becomes a clinic", () => {
+    let s = reducer(network(), { type: "updateLocation", id: "c", kind: "warehouse" });
+    expect(s.locations[3]?.population).toBeNull();
+    s = reducer(s, { type: "updateLocation", id: "w1", kind: "clinic" });
+    expect(s.locations[1]?.population).toBeNull();
+    s = reducer(s, { type: "updateLocation", id: "w2", kind: "clinic", population: 800 });
+    expect(s.locations[2]?.population).toBe(800);
+  });
+
+  it("reads typed populations with separators and explains bad ones", () => {
+    expect(parsePopulation("12,400")).toBe(12_400);
+    expect(parsePopulation(" 12 400 ")).toBe(12_400);
+    for (const bad of ["", "abc", "0", "1.5", "-3", "100000001"]) {
+      expect(parsePopulation(bad)).toBeNull();
+      expect(populationError(bad)).not.toBeNull();
+    }
+    expect(populationError("")).toMatch(/how many people/);
+    expect(populationError("12k")).toMatch(/whole number/);
+    expect(populationError("12,400")).toBeNull();
+    expect(formatPopulation(1_234_567)).toBe("1,234,567");
+    expect(peopleLabel(1)).toBe("1 person");
+    expect(peopleLabel(12_400)).toBe("12,400 people");
   });
 });
 
@@ -294,6 +350,28 @@ describe("distance", () => {
   });
 });
 
+describe("marker scale", () => {
+  it("shrinks squares from 24px up close to 12px zoomed out", () => {
+    expect(squareSize(16)).toBe(24);
+    expect(squareSize(12)).toBe(24);
+    expect(squareSize(8)).toBe(18);
+    expect(squareSize(4)).toBe(12);
+    expect(squareSize(1)).toBe(12);
+    // Never grows as you zoom out.
+    for (let z = 1; z < 16; z += 0.25)
+      expect(squareSize(z)).toBeLessThanOrEqual(squareSize(z + 0.25));
+  });
+
+  it("shrinks the letter with the square, then drops it below 8px", () => {
+    expect(letterSize(24)).toBe(13);
+    expect(letterSize(18)).toBe(10);
+    expect(letterSize(15)).toBe(8);
+    expect(letterSize(14)).toBe(8);
+    expect(letterSize(13.5)).toBe(0);
+    expect(letterSize(12)).toBe(0);
+  });
+});
+
 describe("line geometry", () => {
   const a = { lat: 51.5, lng: -0.12 };
   const b = { lat: 51.52, lng: -0.08 };
@@ -342,6 +420,16 @@ describe("parseState", () => {
       { id: "again", fromId: "p", toId: "w1" }, // same link as "pw"
     );
     expect(parseState(raw)).toEqual(s);
+  });
+
+  it("loads a clinic without a valid population as not set, and ignores one on other kinds", () => {
+    const raw = JSON.parse(JSON.stringify(network()));
+    delete raw.locations[3].population;
+    raw.locations[1].population = 900;
+    const parsed = parseState(raw)!;
+    expect(parsed.locations.map((l) => l.population)).toEqual([null, null, null, null]);
+    raw.locations[3].population = "lots";
+    expect(parseState(raw)?.locations[3]?.population).toBeNull();
   });
 
   it("always loads ports as open 24/7", () => {

@@ -110,6 +110,9 @@ export const demoActions = {
   setPortMode(id: string, portMode: PortMode) {
     dispatch({ type: "updateLocation", id, portMode });
   },
+  setPopulation(id: string, population: number) {
+    dispatch({ type: "updateLocation", id, population });
+  },
   setLocationHours(id: string, hours: WeeklyHours) {
     dispatch({ type: "updateLocation", id, hours });
   },

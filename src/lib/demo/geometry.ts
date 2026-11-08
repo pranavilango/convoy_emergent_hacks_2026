@@ -28,6 +28,24 @@ export function formatDistance(km: number): string {
   return `${Math.round(km).toLocaleString("en-US")} km`;
 }
 
+// --- Marker scale ----------------------------------------------------------------------------
+
+/** Square side in px at a zoom level: 24px from street level (zoom ≥ 12) down to 12px for whole
+ *  countries and continents (zoom ≤ 4), shrinking smoothly in between. */
+export function squareSize(zoom: number): number {
+  const size = 12 + 1.5 * (zoom - 4);
+  return Math.round(Math.min(24, Math.max(12, size)) * 2) / 2;
+}
+
+/** Smallest letter worth drawing; below this it's noise, so the square shows color only. */
+export const MIN_LETTER_PX = 8;
+
+/** Letter size for a square of `size` px, or 0 when the square is too small to hold one. */
+export function letterSize(size: number): number {
+  const px = Math.round(size * 0.55);
+  return px >= MIN_LETTER_PX ? px : 0;
+}
+
 /** Size of the Mercator world at zoom 0, in pixels (Google's convention). */
 const TILE = 256;
 

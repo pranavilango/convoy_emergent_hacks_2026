@@ -1,12 +1,21 @@
 "use client";
 
-import { AdvancedMarker, Map, Polyline, useMap } from "@vis.gl/react-google-maps";
+import { AdvancedMarker, ColorScheme, Map, Polyline, useMap } from "@vis.gl/react-google-maps";
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 
-import { distanceKm, formatDistance, pointBeforeEnd, visualMidpoint } from "@/lib/demo/geometry";
+import {
+  distanceKm,
+  formatDistance,
+  letterSize,
+  MIN_LETTER_PX,
+  pointBeforeEnd,
+  squareSize,
+  visualMidpoint,
+} from "@/lib/demo/geometry";
 import { degrees, findConnection, involves } from "@/lib/demo/graph";
 import { summarizeHours } from "@/lib/demo/hours";
 import { canSupply, KIND_INFO, kindLabel, SUPPLIES } from "@/lib/demo/kinds";
+import { peopleLabel } from "@/lib/demo/population";
 import type { Connection, Location } from "@/lib/demo/types";
 import { cn } from "@/lib/utils";
 
@@ -17,11 +26,15 @@ const DEFAULT_ZOOM = 2;
 const SINGLE_LOCATION_ZOOM = 14;
 const FIT_PADDING = { top: 160, right: 60, bottom: 60, left: 60 };
 
-/** Connection lines use the same ink as the squares' borders. */
+/** Connection lines are an aquamarine core (the site accent) inside an ink casing, like a road on
+ *  a map: the ink edge holds against bright imagery, the aquamarine against dark ground and
+ *  water. The ink matches the squares' borders. */
 const LINE_INK = "#050a0f";
-/** Distance from the destination's centre to the arrow tip: half a square (8–10px) plus its
- *  outline and a hair of space, so the arrowhead sits just outside the square's edge. */
-const ARROW_GAP_PX = 13;
+const LINE_CORE = "#4dd0b7";
+/** Squares grow by this much when selected. */
+const ACTIVE_GROWTH_PX = 4;
+/** Space between the arrow tip and the destination square, beyond the square's cream ring. */
+const ARROW_CLEARANCE_PX = 3.5;
 /** Open chevron like the site's → glyph. Symbol "up" (−y) points along the line, tip at 0,0. */
 const ARROW_PATH = "M -1,1.6 0,0 1,1.6";
 
@@ -61,6 +74,8 @@ export function MapView({
   const focusLocationId = connectingFrom ?? (selection?.kind === "location" ? selection.id : null);
   const selectedConnectionId = selection?.kind === "connection" ? selection.id : null;
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
+  // Squares (and their letters) shrink as you zoom out; see squareSize().
+  const size = squareSize(zoom);
 
   const selectedLocation =
     selection?.kind === "location" && !connectingFrom ? locationById.get(selection.id) : undefined;
@@ -73,6 +88,10 @@ export function MapView({
       mapId={mapId}
       defaultCenter={DEFAULT_CENTER}
       defaultZoom={DEFAULT_ZOOM}
+      // Flat road map in Google's built-in dark scheme: no Cloud Console styling needed. Can only
+      // be set when the map is created.
+      mapTypeId="roadmap"
+      colorScheme={ColorScheme.DARK}
       gestureHandling="greedy"
       disableDefaultUI
       zoomControl
@@ -101,6 +120,12 @@ export function MapView({
             from={from}
             to={to}
             zoom={zoom}
+            // Half the destination square, its 1.5px cream ring, and a little clearance.
+            arrowGap={
+              (size + (to.id === focusLocationId ? ACTIVE_GROWTH_PX : 0)) / 2 +
+              1.5 +
+              ARROW_CLEARANCE_PX
+            }
             emphasis={emphasis}
             interactive={!connectingFrom}
             onClick={() => onSelect({ kind: "connection", id: connection.id })}
@@ -130,6 +155,7 @@ export function MapView({
             key={location.id}
             location={location}
             state={state}
+            size={size}
             onClick={() => {
               if (!connectingFrom) onSelect({ kind: "location", id: location.id });
               else if (state === "linked" || state === "candidate") onConnectTo(location.id);
@@ -139,12 +165,21 @@ export function MapView({
       })}
 
       {selectedLocation && (
-        <MapCard position={selectedLocation} gap={14}>
+        <MapCard position={selectedLocation} gap={(size + ACTIVE_GROWTH_PX) / 2 + 4}>
           <CardLabel color={KIND_INFO[selectedLocation.kind].color}>
             {kindLabel(selectedLocation)}
           </CardLabel>
           <p className="mt-1.5 text-base leading-tight tracking-tight">{selectedLocation.name}</p>
           <p className="mt-1 text-xs leading-snug opacity-60">{selectedLocation.address}</p>
+          {selectedLocation.kind === "clinic" && (
+            <p className="mt-2 text-sm">
+              {selectedLocation.population === null ? (
+                <span className="opacity-70">Population not set</span>
+              ) : (
+                <>Serves {peopleLabel(selectedLocation.population)}</>
+              )}
+            </p>
+          )}
           <ul className="mt-2.5 space-y-0.5 font-mono text-[10px] uppercase tracking-wider opacity-80">
             {selectedLocation.kind === "port" ? (
               <li>Open 24/7</li>
@@ -217,17 +252,26 @@ export function connectionCountLabel(count: number): string {
  *  kind the origin can't supply, so they're dimmed. */
 type SquareState = "idle" | "active" | "linked" | "candidate" | "unavailable";
 
-/** A location drawn as a square centred exactly on its coordinates, so connection lines meet
- *  the middle of each square. */
+/**
+ * A location drawn as a square centred exactly on its coordinates, so connection lines meet the
+ * middle of each square. It carries its kind's letter (P, W, C) while it's big enough to read:
+ * zoomed out, the square and letter shrink together, and the letter fades out below 8px so the
+ * square shows color only.
+ */
 function LocationSquare({
   location,
   state,
+  size,
   onClick,
 }: {
   location: Location;
   state: SquareState;
+  /** Side in px at the current zoom (selected squares are a little bigger). */
+  size: number;
   onClick: () => void;
 }) {
+  const side = state === "active" ? size + ACTIVE_GROWTH_PX : size;
+  const letter = letterSize(side);
   return (
     <AdvancedMarker
       position={{ lat: location.lat, lng: location.lng }}
@@ -241,17 +285,30 @@ function LocationSquare({
       <div className="relative font-display">
         <span
           className={cn(
-            "block rounded-sm border-2 border-ink shadow-[0_0_0_1.5px_var(--color-ink-foreground)] transition-transform",
-            state === "active" ? "h-5 w-5" : "h-4 w-4 group-hover:scale-125",
+            "flex items-center justify-center rounded-sm border-2 border-ink font-semibold leading-none text-ink shadow-[0_0_0_1.5px_var(--color-ink-foreground)] transition-[width,height,font-size,transform] duration-150",
+            state !== "active" && "group-hover:scale-125",
             state === "linked" &&
               "shadow-[0_0_0_1.5px_var(--color-ink-foreground),0_0_0_4px_var(--color-ink)]",
             state === "candidate" && "cursor-crosshair",
             state === "unavailable" && "cursor-not-allowed opacity-35 group-hover:scale-100",
           )}
-          style={{ backgroundColor: KIND_INFO[location.kind].color }}
-        />
+          style={{
+            width: side,
+            height: side,
+            // Hold the smallest size while hidden so the letter fades out rather than vanishing.
+            fontSize: letter || MIN_LETTER_PX,
+            backgroundColor: KIND_INFO[location.kind].color,
+          }}
+        >
+          <span
+            aria-hidden
+            className={cn("transition-opacity duration-150", letter === 0 && "opacity-0")}
+          >
+            {KIND_INFO[location.kind].letter}
+          </span>
+        </span>
         {state !== "active" && state !== "unavailable" && (
-          <span className="pointer-events-none absolute bottom-full left-1/2 mb-2 hidden max-w-48 -translate-x-1/2 truncate whitespace-nowrap rounded-sm bg-ink px-2 py-1 text-xs text-ink-foreground group-hover:block">
+          <span className="pointer-events-none absolute bottom-full left-1/2 mb-2 hidden max-w-48 -translate-x-1/2 truncate whitespace-nowrap rounded-sm border border-ink-foreground/25 bg-ink px-2 py-1 text-xs text-ink-foreground group-hover:block">
             {location.name}
             {state === "linked" && <span className="ml-1.5 opacity-60">· supplied</span>}
           </span>
@@ -265,19 +322,20 @@ function LocationSquare({
 
 type LineEmphasis = "normal" | "strong" | "dim";
 
-/** A single crisp ink stroke, close to the 2px ink border on the squares. */
-const LINE_STYLE: Record<LineEmphasis, { weight: number; opacity: number; z: number }> = {
-  normal: { weight: 1.5, opacity: 1, z: 2 },
-  strong: { weight: 2, opacity: 1, z: 4 },
-  dim: { weight: 1.5, opacity: 0.3, z: 1 },
+/** `core` is the aquamarine stroke; the ink casing adds 1px on each side. */
+const LINE_STYLE: Record<LineEmphasis, { core: number; opacity: number; z: number }> = {
+  normal: { core: 1.5, opacity: 1, z: 2 },
+  strong: { core: 2.5, opacity: 1, z: 4 },
+  dim: { core: 1.5, opacity: 0.4, z: 1 },
 };
+const CASING_PX = 2;
 
-function arrowIcon(weight: number, opacity: number): google.maps.IconSequence {
+function arrowIcon(color: string, weight: number, opacity: number): google.maps.IconSequence {
   return {
     icon: {
       path: ARROW_PATH,
       scale: 3.5,
-      strokeColor: LINE_INK,
+      strokeColor: color,
       strokeOpacity: opacity,
       strokeWeight: weight,
       fillOpacity: 0,
@@ -287,15 +345,17 @@ function arrowIcon(weight: number, opacity: number): google.maps.IconSequence {
 }
 
 /**
- * A directed connection: a straight ink line from one square to another, ending in a small open
- * chevron just outside the destination square. The line stops short of the destination's centre
- * by a fixed number of screen pixels (recomputed as you zoom) so the arrow is never hidden under
- * the square. Its length on the map is the straight-line distance shown in the card.
+ * A directed connection: a thin aquamarine line with an ink outline from one square to another,
+ * ending in a matching open chevron just outside the destination square. The line stops short of
+ * the destination's centre by `arrowGap` screen pixels (recomputed as you zoom) so the arrow is
+ * never hidden under the square. Its length on the map is the straight-line distance shown in
+ * the card.
  */
 function ConnectionLine({
   from,
   to,
   zoom,
+  arrowGap,
   emphasis,
   interactive,
   onClick,
@@ -303,6 +363,7 @@ function ConnectionLine({
   from: Location;
   to: Location;
   zoom: number;
+  arrowGap: number;
   emphasis: LineEmphasis;
   interactive: boolean;
   onClick: () => void;
@@ -310,20 +371,30 @@ function ConnectionLine({
   const [hovered, setHovered] = useState(false);
   const style = LINE_STYLE[hovered && interactive && emphasis !== "strong" ? "strong" : emphasis];
   const start = { lat: from.lat, lng: from.lng };
-  const tip = pointBeforeEnd(start, to, zoom, ARROW_GAP_PX);
+  const tip = pointBeforeEnd(start, to, zoom, arrowGap);
   // When the squares overlap on screen there's no room for an arrow; draw nothing until zoomed in.
   if (!tip) return null;
   const path = [start, tip];
   return (
     <>
+      {/* Casing first, core on top; each line keeps its own pair so crossings read cleanly. */}
       <Polyline
         path={path}
         strokeColor={LINE_INK}
         strokeOpacity={style.opacity}
-        strokeWeight={style.weight}
-        zIndex={style.z}
+        strokeWeight={style.core + CASING_PX}
+        zIndex={style.z * 2}
         clickable={false}
-        icons={[arrowIcon(style.weight, style.opacity)]}
+        icons={[arrowIcon(LINE_INK, style.core + CASING_PX, style.opacity)]}
+      />
+      <Polyline
+        path={path}
+        strokeColor={LINE_CORE}
+        strokeOpacity={style.opacity}
+        strokeWeight={style.core}
+        zIndex={style.z * 2 + 1}
+        clickable={false}
+        icons={[arrowIcon(LINE_CORE, style.core, style.opacity)]}
       />
       {interactive && (
         // Wide invisible stroke on top so a thin line is still easy to hover and click.
@@ -342,7 +413,8 @@ function ConnectionLine({
   );
 }
 
-/** Dashed line with an arrowhead from the origin to the cursor while choosing a destination. */
+/** Dashed line with an arrowhead from the origin to the cursor while choosing a destination,
+ *  in the same aquamarine-in-ink style as the connection lines. */
 function DraftLine({ origin }: { origin: Location }) {
   const map = useMap();
   useEffect(() => {
@@ -354,20 +426,18 @@ function DraftLine({ origin }: { origin: Location }) {
       clickable: false,
       strokeOpacity: 0,
       zIndex: 30,
-      icons: [
-        {
-          icon: {
-            path: "M 0,-1 0,1",
-            strokeColor: LINE_INK,
-            strokeOpacity: 0.8,
-            strokeWeight: 1.5,
-            scale: 3,
+      // Icons draw in order, so each casing goes before its core.
+      icons: [LINE_INK, LINE_CORE].flatMap((color, i) => {
+        const weight = i === 0 ? 1.5 + CASING_PX : 1.5;
+        return [
+          {
+            icon: { path: "M 0,-1 0,1", strokeColor: color, strokeWeight: weight, scale: 3 },
+            offset: "0",
+            repeat: "10px",
           },
-          offset: "0",
-          repeat: "10px",
-        },
-        arrowIcon(1.5, 0.8),
-      ],
+          arrowIcon(color, weight, 1),
+        ];
+      }),
     });
     map.setOptions({ draggableCursor: "crosshair" });
     const listener = map.addListener("mousemove", (event: google.maps.MapMouseEvent) => {

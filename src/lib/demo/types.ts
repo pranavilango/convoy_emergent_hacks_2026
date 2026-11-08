@@ -15,6 +15,9 @@ export type Location = {
   portMode: PortMode | null;
   /** Weekly working hours. Always 24/7 for ports. */
   hours: WeeklyHours;
+  /** People a clinic serves (whole number, 1–100,000,000). Null for ports and warehouses, and
+   *  for a clinic that hasn't been given one yet (e.g. just changed from another kind). */
+  population: number | null;
   createdAt: string;
 };
 

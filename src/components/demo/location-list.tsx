@@ -13,6 +13,7 @@ import {
   type LocationKind,
   type PortMode,
 } from "@/lib/demo/kinds";
+import { formatPopulation, parsePopulation, populationError } from "@/lib/demo/population";
 import { connectionsBrokenByKind, MAX_LOCATION_NAME_LENGTH } from "@/lib/demo/reducer";
 import { demoActions } from "@/lib/demo/store";
 import type { Connection, Location } from "@/lib/demo/types";
@@ -29,6 +30,7 @@ import {
 } from "./controls";
 import { HoursEditor } from "./hours-editor";
 import { KIND_OPTIONS, PORT_MODE_OPTIONS } from "./location-kinds";
+import { PopulationInput } from "./population-input";
 import { Select } from "./select";
 
 const plural = (n: number, word: string) => `${n} ${n === 1 ? word : `${word}s`}`;
@@ -172,6 +174,7 @@ function LocationEditor({
           />
         </div>
       )}
+      {location.kind === "clinic" && <ClinicPopulation location={location} />}
       <LocationHours location={location} />
       <LocationConnections
         location={location}
@@ -191,6 +194,56 @@ function LocationEditor({
           ? `Remove location + ${plural(own.length, "connection")}`
           : "Remove location"}
       </Button>
+    </div>
+  );
+}
+
+/** Saved on blur or Enter; Escape puts the saved value back. */
+function ClinicPopulation({ location }: { location: Location }) {
+  const saved = location.population === null ? "" : formatPopulation(location.population);
+  const [text, setText] = useState(saved);
+  const [error, setError] = useState<string | null>(null);
+
+  function commit() {
+    if (text.trim() === saved) {
+      setError(null);
+      return;
+    }
+    const problem = populationError(text);
+    const value = parsePopulation(text);
+    if (problem || value === null) {
+      setError(problem);
+      return;
+    }
+    setError(null);
+    demoActions.setPopulation(location.id, value);
+    setText(formatPopulation(value));
+  }
+
+  return (
+    <div className="space-y-1">
+      <PopulationInput
+        id={`location-population-${location.id}`}
+        value={text}
+        onChange={(v) => {
+          setText(v);
+          if (error) setError(null);
+        }}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+          } else if (e.key === "Escape") {
+            setText(saved);
+            setError(null);
+          }
+        }}
+        error={error}
+      />
+      {location.population === null && !error && (
+        <p className="text-xs font-semibold">Not set yet. Planning needs it.</p>
+      )}
     </div>
   );
 }

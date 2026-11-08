@@ -24,7 +24,7 @@ const outputs = ["Solar priority", "Panel sizing", "Battery backup", "Cold chain
 const inputs = [
   ["01", "Ports", "Air and sea entry points for supplies."],
   ["02", "Warehouses", "Where medicines are stored and kept cold."],
-  ["03", "Clinics", "Where patients are treated."],
+  ["03", "Clinics", "Where patients are treated, and how many people each serves."],
   ["04", "Working hours", "When each site is staffed and needs power."],
 ] as const;
 

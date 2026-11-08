@@ -12,7 +12,7 @@ import type { Location } from "@/lib/demo/types";
 import { AddLocationForm } from "./add-location-form";
 import { focusRing } from "./controls";
 import { ConnectionsManager } from "./connections-manager";
-import { LocationKinds } from "./location-kinds";
+import { KindMark, LocationKinds } from "./location-kinds";
 import { LocationList } from "./location-list";
 import { connectionCountLabel, MapView, type FocusRequest } from "./map-view";
 import type { Selection } from "./selection";
@@ -41,7 +41,7 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
     window.gm_authFailure = () => setProblem("auth-failed");
     if (!mapId) {
       console.warn(
-        `NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID is not set; using ${FALLBACK_MAP_ID}. The map won't use the Convoy style.`,
+        `NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID is not set; using ${FALLBACK_MAP_ID}. That's fine for development.`,
       );
     }
     return () => {
@@ -280,15 +280,11 @@ function Legend({
 }) {
   return (
     // Bottom-left, above Google's logo, so it never collides with the connect banner up top.
-    <div className="pointer-events-none absolute bottom-9 left-3 rounded-sm bg-ink/90 px-3 py-2.5 font-mono text-[11px] uppercase tracking-wider text-ink-foreground shadow-lg backdrop-blur-sm">
+    <div className="pointer-events-none absolute bottom-9 left-3 rounded-sm border border-ink-foreground/15 bg-ink/90 px-3 py-2.5 font-mono text-[11px] uppercase tracking-wider text-ink-foreground shadow-lg backdrop-blur-sm">
       <ul className="space-y-1.5">
         {LOCATION_KINDS.map((kind) => (
           <li key={kind} className="flex items-center gap-2">
-            <span
-              aria-hidden
-              className="inline-block h-2.5 w-2.5 rounded-sm"
-              style={{ backgroundColor: KIND_INFO[kind].color }}
-            />
+            <KindMark kind={kind} className="h-3.5 w-3.5 text-[8px]" />
             <span>{KIND_INFO[kind].plural}</span>
             <span className="ml-auto pl-3 opacity-60">
               {String(locations.filter((l) => l.kind === kind).length).padStart(2, "0")}
@@ -296,8 +292,8 @@ function Legend({
           </li>
         ))}
         <li className="flex items-center gap-2 border-t border-ink-foreground/15 pt-1.5">
-          {/* The legend sits on ink, so the sample uses cream; on the map lines are ink. */}
-          <span aria-hidden className="inline-block w-2.5 text-center leading-none">
+          {/* Aquamarine like the lines' core (the legend's ink is their outline). */}
+          <span aria-hidden className="inline-block w-3.5 text-center leading-none text-background">
             →
           </span>
           <span>Supply link</span>

@@ -2,6 +2,7 @@ import { findConnection, involves } from "./graph";
 import { ALWAYS_OPEN, cloneHours, DEFAULT_HOURS, hoursError, parseHours } from "./hours";
 import type { WeeklyHours } from "./hours";
 import { canSupply, isLocationKind, isPortMode, type LocationKind, type PortMode } from "./kinds";
+import { isPopulation } from "./population";
 import type { Connection, DemoState, Location, NewLocation } from "./types";
 
 export const INITIAL_STATE: DemoState = { locations: [], connections: [] };
@@ -19,8 +20,11 @@ export type DemoAction =
        *  weekdays 9–5). */
       kind?: LocationKind;
       portMode?: PortMode;
-      /** Ignored for ports, which are always open. */
+      /** Refused for ports, which are always open. */
       hours?: WeeklyHours;
+      /** Clinics only. A site that stops being a clinic loses its population; one that becomes a
+       *  clinic starts without one unless it's given here. */
+      population?: number;
     }
   | { type: "removeLocation"; id: string }
   /** Only port → warehouse and warehouse → clinic. Duplicates are ignored. */
@@ -67,10 +71,13 @@ export function reducer(state: DemoState, action: DemoAction): DemoState {
       const isPort = location.kind === "port";
       if (isPort && !isPortMode(location.portMode)) return state;
       if (!isPort && hoursError(location.hours)) return state;
+      const isClinic = location.kind === "clinic";
+      if (isClinic && !isPopulation(location.population)) return state;
       const added: Location = {
         ...location,
         name,
         portMode: isPort ? location.portMode : null,
+        population: isClinic ? location.population : null,
         hours: cloneHours(isPort ? ALWAYS_OPEN : location.hours),
         id: action.id,
         createdAt: action.createdAt,
@@ -104,6 +111,13 @@ export function reducer(state: DemoState, action: DemoAction): DemoState {
         next.portMode = null;
         if (action.hours !== undefined) next.hours = cloneHours(action.hours);
         else if (kindChanged && current.kind === "port") next.hours = cloneHours(DEFAULT_HOURS);
+      }
+
+      if (action.population !== undefined) {
+        if (next.kind !== "clinic" || !isPopulation(action.population)) return state;
+        next.population = action.population;
+      } else if (next.kind !== "clinic") {
+        next.population = null;
       }
 
       const locations = state.locations.map((l) => (l.id === action.id ? next : l));
@@ -155,7 +169,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function parseLocation(value: unknown): Location | null {
   if (!isRecord(value)) return null;
-  const { id, name, address, placeId, lat, lng, kind, portMode, createdAt } = value;
+  const { id, name, address, placeId, lat, lng, kind, portMode, population, createdAt } = value;
   if (typeof id !== "string" || !id) return null;
   if (typeof name !== "string" || !name.trim() || typeof address !== "string") return null;
   if (typeof lat !== "number" || !Number.isFinite(lat) || Math.abs(lat) > 90) return null;
@@ -176,6 +190,8 @@ function parseLocation(value: unknown): Location | null {
     kind,
     portMode: mode,
     hours,
+    // Clinics saved before population existed load as "not set yet".
+    population: kind === "clinic" && isPopulation(population) ? population : null,
     createdAt,
   };
 }

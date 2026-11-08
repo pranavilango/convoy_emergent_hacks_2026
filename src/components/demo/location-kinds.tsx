@@ -1,7 +1,31 @@
-import { KIND_INFO, LOCATION_KINDS, PORT_MODE_LABELS, PORT_MODES } from "@/lib/demo/kinds";
+import {
+  KIND_INFO,
+  LOCATION_KINDS,
+  PORT_MODE_LABELS,
+  PORT_MODES,
+  type LocationKind,
+} from "@/lib/demo/kinds";
+import { peopleLabel } from "@/lib/demo/population";
 import type { Location } from "@/lib/demo/types";
+import { cn } from "@/lib/utils";
 
-import { SectionLabel, Swatch } from "./controls";
+import { SectionLabel } from "./controls";
+
+/** A kind's colored square with its letter, as drawn on the map. */
+export function KindMark({ kind, className }: { kind: LocationKind; className?: string }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border border-ink font-display text-[9px] font-semibold leading-none text-ink",
+        className,
+      )}
+      style={{ backgroundColor: KIND_INFO[kind].color }}
+    >
+      {KIND_INFO[kind].letter}
+    </span>
+  );
+}
 
 /** Options for the Type select. */
 export const KIND_OPTIONS = LOCATION_KINDS.map((k) => ({
@@ -17,6 +41,9 @@ export const PORT_MODE_OPTIONS = PORT_MODES.map((m) => ({ value: m, label: PORT_
 export function LocationKinds({ locations }: { locations: Location[] }) {
   const count = (filter: (l: Location) => boolean) =>
     String(locations.filter(filter).length).padStart(2, "0");
+  const clinics = locations.filter((l) => l.kind === "clinic");
+  const totalPopulation = clinics.reduce((sum, l) => sum + (l.population ?? 0), 0);
+  const unset = clinics.filter((l) => l.population === null).length;
 
   return (
     <section aria-labelledby="kinds-heading" className="space-y-4">
@@ -31,7 +58,7 @@ export function LocationKinds({ locations }: { locations: Location[] }) {
           const info = KIND_INFO[kind];
           return (
             <li key={kind} className="grid grid-cols-[auto_1fr_auto] items-baseline gap-x-3 py-3">
-              <Swatch color={info.color} className="translate-y-[1px]" />
+              <KindMark kind={kind} className="translate-y-[2px]" />
               <span className="min-w-0">
                 <span className="block text-lg leading-tight tracking-tight">{info.label}</span>
                 <span className="block text-xs opacity-70">{info.description}</span>
@@ -41,6 +68,12 @@ export function LocationKinds({ locations }: { locations: Location[] }) {
                       (mode) =>
                         `${PORT_MODE_LABELS[mode]} ${count((l) => l.kind === "port" && l.portMode === mode)}`,
                     ).join(" · ")}
+                  </span>
+                )}
+                {kind === "clinic" && (
+                  <span className="mt-1 block font-mono text-[11px] uppercase tracking-wider opacity-70">
+                    Serves {peopleLabel(totalPopulation)}
+                    {unset > 0 && ` · ${unset} not set`}
                   </span>
                 )}
               </span>

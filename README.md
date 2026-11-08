@@ -40,8 +40,8 @@ npm run dev        # http://localhost:3000
 ## Demo (`/demo`)
 
 "Try the demo" opens a map editor for a medical supply network. Search an address and add it as a
-**port** (sea or air), **warehouse**, or **clinic**; it's pinned on the map as a colored square.
-Warehouses and clinics get working hours (the grid, the region, and staffing all vary); ports are
+**port** (sea or air), **warehouse**, or **clinic** (with the population it serves); it's pinned
+on the map as a colored square marked P, W, or C. Warehouses and clinics get working hours (the grid, the region, and staffing all vary); ports are
 always open. Connect sites to show how supplies flow: select a port or warehouse, press
 **Connect**, then click the sites it supplies (click again to unlink). You can also connect from
 the panel. Everything is saved in the browser (`localStorage`, key `convoy.demo.v2`). Each visitor
@@ -53,7 +53,8 @@ The network is a directed graph, ready to hand to the allocation engine:
   `portMode` `"sea"` or `"air"` (null for other kinds). `hours` is one list of `{ open, close }`
   ranges per day (`mon`–`sun`), in minutes since midnight. An empty list means closed,
   `close < open` runs past midnight, and `close: 1440` means "until midnight". Ports are always
-  24/7.
+  24/7. Clinics have `population`, the number of people they serve (a whole number from 1 to
+  100,000,000); it's null for other kinds, and for a clinic until it's set.
 - **Connections** are the edges, stored as `{ id, fromId, toId }`. Supplies flow one way, so the
   only allowed links are port → warehouse and warehouse → clinic (no loops, nothing backwards,
   no skipping a step). Changing a site's type removes links that no longer fit, after asking.
@@ -65,8 +66,9 @@ discarded on load.
 
 - Page: `src/app/demo/page.tsx`. UI: `src/components/demo/`.
 - State: `src/lib/demo/`. `kinds.ts` defines the three kinds and the supply rule, `reducer.ts`
-  enforces it, `graph.ts` has the connection helpers, `hours.ts` working hours, `geometry.ts`
-  distance, and `store.ts` handles saving. Swap `store.ts` to move to a backend.
+  enforces it, `graph.ts` has the connection helpers, `hours.ts` working hours, `population.ts`
+  clinic population, `geometry.ts` distance and marker sizing, and `store.ts` handles saving.
+  Swap `store.ts` to move to a backend.
 
 ### Google Maps setup
 
@@ -77,17 +79,14 @@ discarded on load.
 3. Create a **Map ID** (JavaScript, Vector) under Google Maps Platform → Map management.
 4. Copy `.env.example` to `.env.local` and fill in both values, then restart `npm run dev`.
 
-Without a key the demo still loads, shows how to configure it, and lets you manage types.
+Without a key the demo still loads, shows how to configure it, and lists the location types.
 
 ### Map style
 
-Maps that use a Map ID are styled in Cloud Console, not in code. To apply the Convoy look:
-
-1. Google Maps Platform → **Map styles** → **Create style** → **Import JSON**, and paste
-   `docs/google-maps-style.json`.
-2. Save, then attach the style to your Map ID (Map ID → select the style → Save).
-
-It can take a few minutes to show up. Until then the map uses Google's default style.
+The demo map is Google's flat road map in its built-in **dark** color scheme, set in code
+(`colorScheme={ColorScheme.DARK}` in `src/components/demo/map-view.tsx`). There's nothing to
+configure in Cloud Console. Leave your Map ID without a custom style attached, or that style's
+look is used instead.
 
 ## Deploying
 

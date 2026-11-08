@@ -10,12 +10,14 @@ import {
   type WeeklyHours,
 } from "@/lib/demo/hours";
 import type { LocationKind, PortMode } from "@/lib/demo/kinds";
+import { parsePopulation, populationError } from "@/lib/demo/population";
 import { MAX_LOCATION_NAME_LENGTH } from "@/lib/demo/reducer";
 import { demoActions } from "@/lib/demo/store";
 
 import { Button, FieldLabel, SectionLabel, Segmented, TextInput } from "./controls";
 import { HoursEditor } from "./hours-editor";
 import { KIND_OPTIONS, PORT_MODE_OPTIONS } from "./location-kinds";
+import { PopulationInput } from "./population-input";
 import { PlaceSearch, type PickedPlace } from "./place-search";
 import { Select } from "./select";
 
@@ -34,8 +36,13 @@ export function AddLocationForm({
   const [kind, setKind] = useState<LocationKind>("port");
   const [portMode, setPortMode] = useState<PortMode>("sea");
   const [hours, setHours] = useState<WeeklyHours>(() => cloneHours(DEFAULT_HOURS));
+  // Population is per clinic, so it's cleared after each addition.
+  const [populationText, setPopulationText] = useState("");
+  const [showPopulationError, setShowPopulationError] = useState(false);
   const isPort = kind === "port";
+  const isClinic = kind === "clinic";
   const hoursProblem = isPort ? null : hoursError(hours);
+  const populationProblem = isClinic ? populationError(populationText) : null;
 
   function onPick(place: PickedPlace) {
     setPicked(place);
@@ -45,11 +52,17 @@ export function AddLocationForm({
   function reset() {
     setPicked(null);
     setName("");
+    setPopulationText("");
+    setShowPopulationError(false);
   }
 
   function submit(event: FormEvent) {
     event.preventDefault();
     if (!picked || hoursProblem) return;
+    if (populationProblem) {
+      setShowPopulationError(true);
+      return;
+    }
     const id = demoActions.addLocation({
       name: name.trim() || picked.name,
       address: picked.address,
@@ -59,6 +72,7 @@ export function AddLocationForm({
       kind,
       portMode: isPort ? portMode : null,
       hours: isPort ? ALWAYS_OPEN : hours,
+      population: isClinic ? parsePopulation(populationText) : null,
     });
     reset();
     onAdded(id);
@@ -113,6 +127,16 @@ export function AddLocationForm({
             onChange={(v) => setKind(v as LocationKind)}
             options={KIND_OPTIONS}
           />
+
+          {isClinic && (
+            <PopulationInput
+              id="location-population"
+              value={populationText}
+              onChange={setPopulationText}
+              onBlur={() => setShowPopulationError(populationText.trim() !== "")}
+              error={showPopulationError ? populationProblem : null}
+            />
+          )}
 
           {isPort ? (
             <div className="space-y-2">

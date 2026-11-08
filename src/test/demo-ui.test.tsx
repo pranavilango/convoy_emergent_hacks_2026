@@ -15,6 +15,7 @@ vi.mock("@vis.gl/react-google-maps", () => ({
   APIProvider: ({ children }: { children: React.ReactNode }) => children,
   Map: () => null,
   AdvancedMarker: () => null,
+  ColorScheme: { DARK: "DARK", LIGHT: "LIGHT", FOLLOW_SYSTEM: "FOLLOW_SYSTEM" },
   useMap: () => null,
   useMapsLibrary: () => null,
 }));
@@ -47,6 +48,7 @@ function addLocation(kind: LocationKind, name: string) {
     kind,
     portMode: kind === "port" ? "sea" : null,
     hours: cloneHours(DEFAULT_HOURS),
+    population: kind === "clinic" ? 1200 : null,
   });
 }
 
@@ -104,7 +106,7 @@ describe("DemoApp without an API key", () => {
 });
 
 describe("location types", () => {
-  it("lists the three fixed types with how many of each are on the map", () => {
+  it("lists the three fixed types, with their map letter and how many are on the map", () => {
     act(() => {
       addLocation("clinic", "Clinic A");
       addLocation("clinic", "Clinic B");
@@ -116,9 +118,9 @@ describe("location types", () => {
         .getAllByRole("listitem")
         .map((li) => li.textContent),
     ).toEqual([
-      expect.stringMatching(/^Port.*Sea 00 · Air 00.*00$/),
-      expect.stringMatching(/^Warehouse.*00$/),
-      expect.stringMatching(/^Clinic.*02$/),
+      expect.stringMatching(/^PPort.*Sea 00 · Air 00.*00$/),
+      expect.stringMatching(/^WWarehouse.*00$/),
+      expect.stringMatching(/^CClinic.*Serves 2,400 people02$/),
     ]);
     // Types are fixed: nothing to create, rename, or delete.
     expect(within(key).queryByRole("button")).toBeNull();
@@ -173,6 +175,47 @@ describe("location list", () => {
     fireEvent.click(screen.getByRole("button", { name: "Change + remove 2 connections" }));
     expect(screen.getByRole("combobox", { name: "Type" })).toHaveTextContent("Clinic");
     expect(screen.queryByRole("button", { name: /^Remove connection from/ })).toBeNull();
+  });
+});
+
+describe("clinic population", () => {
+  it("edits a clinic's population and totals it in the type key", () => {
+    act(() => {
+      addLocation("clinic", "Mwanza Clinic");
+      addLocation("clinic", "Arusha Clinic");
+    });
+    render(<DemoApp />);
+    const key = screen.getByRole("region", { name: /Location types/ });
+    expect(within(key).getByText("Serves 2,400 people")).toBeInTheDocument();
+
+    openLocation("Mwanza Clinic");
+    const input = screen.getByLabelText("Population served");
+    expect(input).toHaveValue("1,200");
+
+    fireEvent.change(input, { target: { value: "12k" } });
+    fireEvent.blur(input);
+    expect(screen.getByRole("alert")).toHaveTextContent(/whole number/);
+
+    fireEvent.change(input, { target: { value: "15 000" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(input).toHaveValue("15,000");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(within(key).getByText("Serves 16,200 people")).toBeInTheDocument();
+  });
+
+  it("asks for a population when a site becomes a clinic", () => {
+    act(() => {
+      addLocation("warehouse", "Central Store");
+    });
+    render(<DemoApp />);
+    openLocation("Central Store");
+    expect(screen.queryByLabelText("Population served")).toBeNull();
+
+    pick("Type", "Clinic");
+    expect(screen.getByLabelText("Population served")).toHaveValue("");
+    expect(screen.getByText("Not set yet. Planning needs it.")).toBeInTheDocument();
+    const key = screen.getByRole("region", { name: /Location types/ });
+    expect(within(key).getByText(/1 not set/)).toBeInTheDocument();
   });
 });
 

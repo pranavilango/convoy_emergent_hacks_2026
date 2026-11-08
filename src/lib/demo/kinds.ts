@@ -13,6 +13,8 @@ export const PORT_MODE_LABELS: Record<PortMode, string> = { sea: "Sea", air: "Ai
 
 type KindInfo = {
   label: string;
+  /** Drawn inside the square on the map. */
+  letter: string;
   plural: string;
   /** Square color on the map and swatch color in the panel. Reads on both the dark map and the
    *  aquamarine panel (swatches get an ink outline there). */
@@ -23,21 +25,24 @@ type KindInfo = {
 export const KIND_INFO: Record<LocationKind, KindInfo> = {
   port: {
     label: "Port",
+    letter: "P",
     plural: "Ports",
     color: "#f2b33d",
     description: "Air or sea entry point for supplies. Open 24/7.",
   },
   warehouse: {
     label: "Warehouse",
+    letter: "W",
     plural: "Warehouses",
     color: "#f2e5db",
     description: "Stores stock and keeps it cold. Supplied by ports.",
   },
   clinic: {
     label: "Clinic",
+    letter: "C",
     plural: "Clinics",
     color: "#ff7aa8",
-    description: "Treats patients. Supplied by warehouses.",
+    description: "Treats the population around it. Supplied by warehouses.",
   },
 };
 
