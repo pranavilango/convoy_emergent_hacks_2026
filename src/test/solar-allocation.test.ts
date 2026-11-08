@@ -109,6 +109,8 @@ describe("solar allocation analysis", () => {
     expect(prompt).toContain("do not bold the label before the colon");
     expect(prompt).toContain("Do not suggest or compare other allocations");
     expect(prompt).toContain("Never mention ids, algorithms, solvers");
+    // Field names stay out of the explanation ("weightedDeliveryHours changed from …").
+    expect(prompt).toContain("Never write field names or camelCase keys from the facts");
     expect(prompt).not.toContain("warehouse-1");
   });
 

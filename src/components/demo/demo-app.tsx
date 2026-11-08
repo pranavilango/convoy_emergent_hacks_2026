@@ -10,6 +10,7 @@ import { unitsAffordable } from "@/lib/demo/budget";
 import { createSampleNetwork } from "@/lib/demo/sample-network";
 import { canSupply, KIND_INFO, LOCATION_KINDS, SUPPLIES } from "@/lib/demo/kinds";
 import { formatPeopleHours, totalClinicPopulation } from "@/lib/demo/population";
+import { cannotReceiveToday } from "@/lib/demo/power";
 import { demoActions, useDemoState } from "@/lib/demo/store";
 import { closeTour, openTour, useTourOpen } from "@/lib/demo/tour";
 import type { Location } from "@/lib/demo/types";
@@ -342,6 +343,9 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
           locations={locations}
           connectionCount={connections.length}
           poweredCount={poweredIds?.size ?? 0}
+          darkCount={
+            locations.filter((l) => cannotReceiveToday(l) && !poweredIds?.has(l.id)).length
+          }
         />
       )}
       {connectingLocation && (
@@ -579,11 +583,14 @@ function Legend({
   locations,
   connectionCount,
   poweredCount,
+  darkCount,
 }: {
   locations: Location[];
   connectionCount: number;
   /** Sites lit by the latest analysis; the row only shows when there are some. */
   poweredCount: number;
+  /** Sites drawn in black and white (never powered while staffed, no solar yet). */
+  darkCount: number;
 }) {
   return (
     // Bottom-left, above Google's logo, so it never collides with the connect banner up top.
@@ -616,6 +623,17 @@ function Legend({
             />
             <span>Chosen for solar</span>
             <span className="ml-auto pl-3 opacity-60">{String(poweredCount).padStart(2, "0")}</span>
+          </li>
+        )}
+        {darkCount > 0 && (
+          <li className="flex items-center gap-2">
+            <span
+              aria-hidden
+              className="inline-block h-3.5 w-3.5 rounded-sm border border-ink grayscale"
+              style={{ backgroundColor: KIND_INFO.clinic.color }}
+            />
+            <span>No power while staffed</span>
+            <span className="ml-auto pl-3 opacity-60">{String(darkCount).padStart(2, "0")}</span>
           </li>
         )}
       </ul>

@@ -16,7 +16,7 @@ import { degrees, findConnection, involves } from "@/lib/demo/graph";
 import { summarizeHours } from "@/lib/demo/hours";
 import { canSupply, KIND_INFO, kindLabel, SUPPLIES } from "@/lib/demo/kinds";
 import { peopleLabel } from "@/lib/demo/population";
-import { formatPower } from "@/lib/demo/power";
+import { cannotReceiveToday, formatPower } from "@/lib/demo/power";
 import type { Connection, Location } from "@/lib/demo/types";
 import { cn } from "@/lib/utils";
 
@@ -143,6 +143,8 @@ export function MapView({
 
       {locations.map((location) => {
         const isOrigin = location.id === connectingFrom;
+        const powered = poweredIds?.has(location.id) ?? false;
+        const noPower = cannotReceiveToday(location);
         const origin = connectingFrom ? locationById.get(connectingFrom) : undefined;
         const state: SquareState =
           isOrigin || location.id === focusLocationId
@@ -159,7 +161,9 @@ export function MapView({
             key={location.id}
             location={location}
             state={state}
-            powered={poweredIds?.has(location.id) ?? false}
+            powered={powered}
+            dark={noPower && !powered}
+            relit={noPower && powered}
             size={size}
             onClick={() => {
               if (!connectingFrom) onSelect({ kind: "location", id: location.id });
@@ -199,6 +203,13 @@ export function MapView({
                   <li key={line}>{line}</li>
                 ))}
                 <li>Grid power {formatPower(selectedLocation.gridPower).toLowerCase()}</li>
+                {cannotReceiveToday(selectedLocation) && (
+                  <li className={poweredIds?.has(selectedLocation.id) ? "text-aqua" : ""}>
+                    {poweredIds?.has(selectedLocation.id)
+                      ? "Solar lets it take in medicines"
+                      : "No power while staffed: can't take in medicines"}
+                  </li>
+                )}
               </>
             )}
           </ul>
@@ -278,12 +289,19 @@ function LocationSquare({
   state,
   size,
   powered,
+  dark,
+  relit,
   onClick,
 }: {
   location: Location;
   state: SquareState;
   /** Chosen for solar by the latest analysis: an aquamarine ring that powers on. */
   powered: boolean;
+  /** Never has grid power while it's staffed, and not (yet) chosen for solar: its colour is
+   *  shown in black and white, letter and all, like a building with the lights off. */
+  dark: boolean;
+  /** Was dark, and the latest analysis gives it solar: its colour powers back on. */
+  relit: boolean;
   /** Side in px at the current zoom (selected squares are a little bigger). */
   size: number;
   onClick: () => void;
@@ -293,7 +311,7 @@ function LocationSquare({
   return (
     <AdvancedMarker
       position={{ lat: location.lat, lng: location.lng }}
-      title={`${location.name} (${kindLabel(location)}${powered ? ", chosen for solar" : ""})`}
+      title={`${location.name} (${kindLabel(location)}${powered ? ", chosen for solar" : dark ? ", no power while staffed" : ""})`}
       onClick={onClick}
       anchorLeft="-50%"
       anchorTop="-50%"
@@ -315,6 +333,8 @@ function LocationSquare({
               "shadow-[0_0_0_1.5px_var(--color-ink-foreground),0_0_0_4px_var(--color-ink)]",
             state === "candidate" && "cursor-crosshair",
             state === "unavailable" && "cursor-not-allowed opacity-35 group-hover:scale-100",
+            dark && "grayscale",
+            relit && "flicker-in",
           )}
           style={{
             width: side,
@@ -336,6 +356,7 @@ function LocationSquare({
             {location.name}
             {state === "linked" && <span className="ml-1.5 opacity-60">· supplied</span>}
             {powered && <span className="ml-1.5 text-aqua">· solar</span>}
+            {dark && <span className="ml-1.5 opacity-60">· no power while staffed</span>}
           </span>
         )}
       </div>

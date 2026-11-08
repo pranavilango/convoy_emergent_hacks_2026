@@ -136,10 +136,13 @@ the built-in engine. The HTTP server is the crate's default `server` feature; th
 build uses the library without it.
 
 Before Analyze unlocks, the panel lists anything the engine would reject, by site name: unlinked
-sites, separate networks, sites closed all week or with overnight shifts, sites that are never (or
-under two hours) both staffed and powered, a network with no power cuts at all (solar would change
-nothing), clinics without a population, or a budget below one unit
-(`src/lib/solar-allocation/readiness.ts`). A result shows the drop in population-weighted wait,
+sites, separate networks, sites closed all week or with overnight shifts, a network with no power
+cuts at all (solar would change nothing), clinics without a population, or a budget below one unit
+(`src/lib/solar-allocation/readiness.ts`). A site's power hours never block Analyze: a site that's
+staffed and powered for only an hour is modelled with that one hour, and one that's never powered
+while staffed (it can't take in medicines at all today) is sent to the engine as `closed`, where
+every delivery to it counts as a full day's wait. That makes it the worst off, so a big clinic in
+that state is near the top of the list for solar, which opens it for its staffed hours. A result shows the drop in population-weighted wait,
 each chosen site (when it takes in medicines today → with solar, people served, supply link), what each extra solar unit buys (the route also asks the engine for the best 1, 2, … units,
 up to 10), and Gemini's plain-language explanation built from those facts. Chosen sites glow on
 the map until the network changes.

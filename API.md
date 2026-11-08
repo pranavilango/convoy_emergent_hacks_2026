@@ -59,7 +59,8 @@ in particular `departure_hours` is **not** accepted (see Semantics).
 | `nodes[].id` | string | Unique. |
 | `nodes[].kind` | `"source"` \| `"pass_through"` \| `"destination"` | Determines which other fields are required. |
 | `latitude` / `longitude` | number | `[-90, 90]` / `[-180, 180]`, degrees. |
-| `open_from`, `open_until` | integer | Pass-throughs and destinations only. `0 ≤ open_from < open_until < 24`. `[a, b]` means the half-open daily interval `[a:00, (b+1):00)`; e.g. `[8, 16]` is open 08:00–17:00 and `[0, 23]` is open 24/7. |
+| `open_from`, `open_until` | integer | Pass-throughs and destinations only, unless `closed`. `0 ≤ open_from ≤ open_until < 24`. `[a, b]` means the half-open daily interval `[a:00, (b+1):00)`; e.g. `[8, 16]` is open 08:00–17:00, `[8, 8]` is open one hour (08:00–09:00), and `[0, 23]` is open 24/7. |
+| `closed` | boolean | Optional, pass-throughs and destinations only; default `false`. `true` means the node can't take in deliveries at all without solar power (e.g. it is never staffed while the grid is on). Give no `open_from`/`open_until` then (`422` otherwise). The node stays in the network: every delivery to it counts as a full day's wait (24 h, longer than any open node can cause), and upgrading it switches it to its solar window. |
 | `solar_open_from`, `solar_open_until` | integer | Optional, pass-throughs and destinations only; give both or neither. The window the node gets with solar power, same format as `open_from`/`open_until`, and it must contain that window. Default `[0, 23]` (open 24/7). Use it when solar removes a power limit but the site is still only staffed part of the day. |
 | `priority` | number | Destinations only. Finite, `≥ 0`; the sum over destinations must be `> 0`. |
 | `edges[].from` / `to` | string | Node ids. Only `source → pass_through` and `pass_through → destination` are allowed; no duplicates. |
@@ -79,6 +80,7 @@ incoming edge, and the graph is (weakly) connected.
   pass-throughs that can reach it. It is averaged over the departure times
   `h = 0, 1, …, 23` (every whole hour). This is fixed; the file cannot change it.
 * Network objective = Σ (priority × average time-to-delivery) ÷ Σ priority.
+* At a `closed` node the wait is always 24 h, whatever the arrival time.
 * Upgrading a node replaces its window with its solar window (`[0, 23]`, open
   24/7, unless `solar_open_from`/`solar_open_until` say otherwise). Only
   pass-throughs and destinations can be upgraded. If `n` is at least their
@@ -113,7 +115,7 @@ Always JSON: `{ "error": "<human-readable message>" }`.
 |--------|------|
 | `400 Bad Request` | Body is not valid multipart; no part named `file`; the file is not valid JSON / has wrong or unknown fields (including `departure_hours`) or unknown `kind`; `n` missing or not a non-negative integer; unknown `strategy`. (Query-string rejections are produced by the HTTP framework and may be plain text rather than JSON.) |
 | `413 Payload Too Large` | Upload larger than `MEDROUTE_MAX_UPLOAD_BYTES`. |
-| `422 Unprocessable Entity` | The file parsed but is not a valid network (bad coordinate/window/priority, solar window that does not contain the opening window, unknown node id in an edge, illegal or duplicate edge, dangling node, disconnected graph, zero total priority), or `n = 0`, or `strategy=exact` exceeds the combination limit. |
+| `422 Unprocessable Entity` | The file parsed but is not a valid network (bad coordinate/window/priority, missing opening window, `closed` with an opening window, solar window that does not contain the opening window, unknown node id in an edge, illegal or duplicate edge, dangling node, disconnected graph, zero total priority), or `n = 0`, or `strategy=exact` exceeds the combination limit. |
 | `404` / `405` | Unknown path / wrong method. |
 | `500` | Internal failure (worker panic). Should not happen. |
 

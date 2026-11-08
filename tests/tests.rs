@@ -294,8 +294,21 @@ fn window_new_accepts_valid() {
 }
 
 #[test]
+fn window_new_accepts_one_hour_windows() {
+    // [a, a] is open for one hour, a:00 up to (a+1):00.
+    for a in [0, 5, 23] {
+        let w = TimeWindow::new(a, a).unwrap();
+        assert_eq!((i64::from(w.start()), i64::from(w.end())), (a, a));
+    }
+    let w = win(8, 8);
+    assert_close(w.wait_hours(8.5), 0.0);
+    assert_close(w.wait_hours(9.0), 23.0); // the longest an open window can make you wait
+    assert_close(w.wait_hours(7.0), 1.0);
+}
+
+#[test]
 fn window_new_rejects_invalid() {
-    for (a, b) in [(5, 5), (6, 5), (-1, 5), (0, 24), (24, 25), (3, -3), (0, 0), (23, 23)] {
+    for (a, b) in [(6, 5), (-1, 5), (0, 24), (24, 25), (3, -3), (23, 22)] {
         assert_eq!(
             TimeWindow::new(a, b),
             Err(ModelError::InvalidWindow { start: a, end: b }),
@@ -1274,8 +1287,9 @@ fn node_record_into_node_for_each_kind() {
         id: "p".into(),
         latitude: 1.0,
         longitude: 2.0,
-        open_from: 3,
-        open_until: 9,
+        open_from: Some(3),
+        open_until: Some(9),
+        closed: false,
         solar_open_from: None,
         solar_open_until: None,
     }
@@ -1287,8 +1301,9 @@ fn node_record_into_node_for_each_kind() {
         id: "d".into(),
         latitude: 1.0,
         longitude: 2.0,
-        open_from: 3,
-        open_until: 9,
+        open_from: Some(3),
+        open_until: Some(9),
+        closed: false,
         solar_open_from: None,
         solar_open_until: None,
         priority: 7.0,
@@ -1301,8 +1316,9 @@ fn node_record_into_node_for_each_kind() {
         id: "d".into(),
         latitude: 1.0,
         longitude: 200.0,
-        open_from: 3,
-        open_until: 9,
+        open_from: Some(3),
+        open_until: Some(9),
+        closed: false,
         solar_open_from: None,
         solar_open_until: None,
         priority: 7.0,
@@ -1846,4 +1862,124 @@ fn solver_skips_sites_whose_solar_window_adds_nothing() {
     )
     .unwrap();
     assert_eq!(solution.selected, vec![ix(2)]);
+}
+
+// ---------------------------------------------------------------------------
+// Closed sites (never open without solar power, e.g. never staffed while the
+// grid is on): still part of the network, counted as a full day's wait.
+// ---------------------------------------------------------------------------
+
+/// ZERO_CHAIN_JSON with D closed without solar power.
+fn chain_with_closed_destination() -> String {
+    ZERO_CHAIN_JSON.replace(
+        "\"open_from\": 12, \"open_until\": 14,",
+        "\"closed\": true,",
+    )
+}
+
+#[test]
+fn closed_window_always_waits_a_full_day() {
+    let closed = TimeWindow::CLOSED;
+    assert!(closed.is_closed());
+    assert!(!closed.is_always_open());
+    assert!(!win(0, 23).is_closed());
+    for t in [0.0, 7.5, 12.0, 23.99, 40.0, -3.0] {
+        assert_close(closed.wait_hours(t), CLOSED_WAIT_HOURS);
+    }
+    // Longer than the longest wait any open window can cause.
+    assert!(CLOSED_WAIT_HOURS > win(8, 8).wait_hours(9.0));
+}
+
+#[test]
+fn closed_window_containment() {
+    // Any solar window "contains" a closed opening window; nothing open fits in a closed one.
+    assert!(win(9, 16).contains(TimeWindow::CLOSED));
+    assert!(TimeWindow::ALWAYS_OPEN.contains(TimeWindow::CLOSED));
+    assert!(TimeWindow::CLOSED.contains(TimeWindow::CLOSED));
+    assert!(!TimeWindow::CLOSED.contains(win(9, 16)));
+}
+
+#[test]
+fn closed_node_is_parsed_with_its_solar_window() {
+    let json = chain_with_closed_destination().replace(
+        "\"closed\": true,",
+        "\"closed\": true, \"solar_open_from\": 9, \"solar_open_until\": 16,",
+    );
+    let input = parse_graph_file(json.as_bytes()).unwrap();
+    let d = input.graph.node(ix(2)).unwrap();
+    assert_eq!(d.window(), Some(TimeWindow::CLOSED));
+    assert_eq!(d.solar_window(), Some(win(9, 16)));
+}
+
+#[test]
+fn closed_node_cannot_also_have_opening_hours() {
+    let json = ZERO_CHAIN_JSON.replace(
+        "\"open_from\": 12, \"open_until\": 14,",
+        "\"open_from\": 12, \"open_until\": 14, \"closed\": true,",
+    );
+    assert_eq!(
+        parse_graph_file(json.as_bytes()).unwrap_err(),
+        InputError::Model(ModelError::ClosedWithWindow)
+    );
+}
+
+#[test]
+fn open_node_still_needs_both_opening_hours() {
+    let neither = ZERO_CHAIN_JSON.replace("\"open_from\": 12, \"open_until\": 14,", "");
+    assert_eq!(
+        parse_graph_file(neither.as_bytes()).unwrap_err(),
+        InputError::Model(ModelError::InvalidWindow { start: -1, end: -1 })
+    );
+    let only_from = ZERO_CHAIN_JSON.replace("\"open_until\": 14,", "");
+    assert_eq!(
+        parse_graph_file(only_from.as_bytes()).unwrap_err(),
+        InputError::Model(ModelError::InvalidWindow { start: 12, end: -1 })
+    );
+}
+
+#[test]
+fn closed_destination_counts_a_full_day_and_solar_opens_it() {
+    // P open [8,10) (average wait 253/24, see ZERO_CHAIN_JSON notes), D closed.
+    let input = parse_graph_file(chain_with_closed_destination().as_bytes()).unwrap();
+    let objective = |indices: &[NodeIndex]| {
+        let set = UpgradeSet::from_indices(3, indices).unwrap();
+        weighted_time_to_delivery(&input.graph, &input.departures, &set)
+    };
+    assert_close(objective(&[]), 253.0 / 24.0 + CLOSED_WAIT_HOURS);
+    assert_close(objective(&[ix(1)]), CLOSED_WAIT_HOURS); // P always open, D still closed
+    assert_close(objective(&[ix(2)]), 253.0 / 24.0); // D opened 24/7 by solar
+    assert_close(objective(&[ix(1), ix(2)]), 0.0);
+}
+
+#[test]
+fn solver_puts_solar_on_the_closed_site_first() {
+    // With D open, P is the best single upgrade; once D is closed, opening it matters most.
+    let input = parse_graph_file(chain_with_closed_destination().as_bytes()).unwrap();
+    let solution = solve(
+        &input.graph,
+        &input.departures,
+        1,
+        Strategy::Auto,
+        &SolverConfig::default(),
+    )
+    .unwrap();
+    assert_eq!(solution.selected, vec![ix(2)]);
+    assert_close(solution.baseline_objective, 253.0 / 24.0 + CLOSED_WAIT_HOURS);
+    assert_close(solution.optimized_objective, 253.0 / 24.0);
+}
+
+#[test]
+fn closed_warehouse_is_also_modelled() {
+    let json = ZERO_CHAIN_JSON.replace("\"open_from\": 8, \"open_until\": 9", "\"closed\": true");
+    let input = parse_graph_file(json.as_bytes()).unwrap();
+    assert_eq!(input.graph.node(ix(1)).unwrap().window(), Some(TimeWindow::CLOSED));
+    let solution = solve(
+        &input.graph,
+        &input.departures,
+        1,
+        Strategy::Auto,
+        &SolverConfig::default(),
+    )
+    .unwrap();
+    assert_eq!(solution.selected, vec![ix(1)]);
 }

@@ -80,7 +80,10 @@ export function GridPowerField({
               {windows.today ? (
                 <>Takes in medicines {formatWindow(windows.today)}, while staffed and powered. </>
               ) : (
-                <>Never has power while it&apos;s staffed, so it can&apos;t keep medicines cold. </>
+                <>
+                  Never has power while it&apos;s staffed, so it can&apos;t take in medicines today.
+                  It&apos;s still analyzed, as one of the sites that need solar most.{" "}
+                </>
               )}
               <span className="text-aqua">With solar: {formatWindow(windows.withSolar)}.</span>
             </p>

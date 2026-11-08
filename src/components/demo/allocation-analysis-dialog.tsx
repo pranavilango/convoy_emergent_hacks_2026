@@ -227,7 +227,9 @@ function AnalysisResult({
                   </div>
                   {windows && (
                     <p className="text-sm text-white/75">
-                      Takes in medicines {windows.today ? formatWindow(windows.today) : "never"}{" "}
+                      {windows.today
+                        ? `Takes in medicines ${formatWindow(windows.today)}`
+                        : "Can't take in medicines today"}{" "}
                       <span className="text-aqua">
                         →{" "}
                         {windowHours(windows.withSolar) === 24

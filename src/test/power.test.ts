@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import { unitsAffordable } from "@/lib/demo/budget";
 import { ALWAYS_OPEN, cloneHours, DEFAULT_HOURS } from "@/lib/demo/hours";
-import { formatPower, isHourWindow, receivingWindows, staffedWindow } from "@/lib/demo/power";
+import {
+  cannotReceiveToday,
+  formatPower,
+  isHourWindow,
+  receivingWindows,
+  staffedWindow,
+} from "@/lib/demo/power";
 import { INITIAL_STATE, parseState, reducer } from "@/lib/demo/reducer";
 import { createSampleNetwork } from "@/lib/demo/sample-network";
 import type { Connection, DemoState, Location, NewLocation } from "@/lib/demo/types";
@@ -76,38 +82,84 @@ const links: Connection[] = [
   { id: "wc", fromId: "w", toId: "c" },
 ];
 
-describe("power problems before Analyze", () => {
-  it("names a site that never has power while it's staffed", () => {
-    const sites = [
-      site("p", "port"),
-      site("w", "warehouse"),
-      site("c", "clinic", { gridPower: { from: 18, until: 24 } }),
-    ];
-    expect(analysisIssues(sites, links, 1)).toEqual([
-      "C never has power while it's staffed (power 18:00–24:00, staffed 09:00–17:00). Widen its power or working hours.",
-    ]);
+describe("which sites the map draws in black and white", () => {
+  it("is warehouses and clinics that never have power while they're staffed", () => {
+    expect(cannotReceiveToday(site("c", "clinic", { gridPower: { from: 18, until: 24 } }))).toBe(
+      true,
+    );
+    expect(cannotReceiveToday(site("w", "warehouse", { gridPower: { from: 0, until: 9 } }))).toBe(
+      true,
+    );
   });
 
-  it("names a site that's staffed and powered for under two hours", () => {
-    const sites = [
-      site("p", "port"),
-      site("w", "warehouse"),
-      site("c", "clinic", { gridPower: { from: 16, until: 20 } }),
-    ];
-    expect(analysisIssues(sites, links, 1)).toEqual([
-      "C is staffed and powered for only 1 hour a day (16:00–17:00). The optimizer needs at least 2, so widen its power or working hours.",
-    ]);
+  it("isn't a site with any powered staffed hour, a reliable grid, or a port", () => {
+    expect(cannotReceiveToday(site("c", "clinic", { gridPower: { from: 16, until: 20 } }))).toBe(
+      false,
+    );
+    expect(cannotReceiveToday(site("c", "clinic", { gridPower: null }))).toBe(false);
+    expect(cannotReceiveToday(site("p", "port"))).toBe(false);
+  });
+});
+
+describe("sites whose power and staffing don't line up", () => {
+  const sites = (clinic: Partial<Location>) => [
+    site("p", "port"),
+    site("w", "warehouse"),
+    site("c", "clinic", clinic),
+  ];
+
+  it("never block Analyze, even when a site is never powered while it's staffed", () => {
+    // Power 18:00–24:00, staffed 09:00–17:00: no overlap at all.
+    expect(analysisIssues(sites({ gridPower: { from: 18, until: 24 } }), links, 1)).toEqual([]);
+    // Power 16:00–20:00: staffed and powered for a single hour.
+    expect(analysisIssues(sites({ gridPower: { from: 16, until: 20 } }), links, 1)).toEqual([]);
+    // Staffed for just one hour.
+    const oneHour = weekdays();
+    for (const d of ["mon", "tue", "wed", "thu", "fri"] as const) {
+      oneHour[d] = [{ open: 9 * 60, close: 10 * 60 }];
+    }
+    expect(analysisIssues(sites({ hours: oneHour, gridPower: null }), links, 1)).toEqual([]);
   });
 
-  it("asks for power hours when no site has a power cut, since solar would change nothing", () => {
-    const sites = [
+  it("still asks for power hours when no site has a power cut, since solar would change nothing", () => {
+    const reliable = [
       site("p", "port"),
       site("w", "warehouse", { gridPower: null }),
       site("c", "clinic", { gridPower: null }),
     ];
-    expect(analysisIssues(sites, links, 1)).toEqual([
+    expect(analysisIssues(reliable, links, 1)).toEqual([
       "No site loses power during its working hours, so solar wouldn't shorten any waits. Set the grid power hours of sites with power cuts.",
     ]);
+  });
+
+  it("are run through the optimizer, which puts solar on a big clinic that can't take in medicines", async () => {
+    // Two clinics off one warehouse. The big one is never powered while it's staffed.
+    const locations = [
+      site("p", "port", { lng: 0 }),
+      site("w", "warehouse", { lng: 0.2, gridPower: { from: 6, until: 18 } }),
+      site("big", "clinic", { lng: 0.4, population: 600_000, gridPower: { from: 18, until: 24 } }),
+      site("small", "clinic", { lng: 0.6, population: 50_000, gridPower: { from: 12, until: 14 } }),
+    ];
+    const connections: Connection[] = [
+      { id: "pw", fromId: "p", toId: "w" },
+      { id: "wb", fromId: "w", toId: "big" },
+      { id: "ws", fromId: "w", toId: "small" },
+    ];
+    expect(analysisIssues(locations, connections, 1)).toEqual([]);
+    const allocation = await generateSolarAllocation({ locations, connections }, 1);
+    expect(allocation.selected).toEqual(["big"]);
+    expect(allocation.optimized_weighted_hours).toBeLessThan(allocation.baseline_weighted_hours);
+  });
+
+  it("include a site that's staffed and powered for only one hour", async () => {
+    const locations = [
+      site("p", "port"),
+      site("w", "warehouse", { lng: 0.2 }),
+      site("c", "clinic", { lng: 0.4, gridPower: { from: 16, until: 20 } }),
+    ];
+    const allocation = await generateSolarAllocation({ locations, connections: links }, 1);
+    expect(allocation.selected).toHaveLength(1);
+    expect(allocation.optimized_weighted_hours).toBeLessThan(allocation.baseline_weighted_hours);
   });
 });
 

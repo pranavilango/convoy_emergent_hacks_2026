@@ -22,9 +22,6 @@ export type HourWindow = { from: number; until: number };
 /** The hours a site has grid power each day, the same every day. Null means a reliable grid. */
 export type GridPower = HourWindow | null;
 
-/** The shortest daily span the optimizer models (its windows `[a, b]` need a < b). */
-export const MIN_WINDOW_HOURS = 2;
-
 /** Eight hours a day: what a site on a rationed grid often gets. Used when limiting power. */
 export const DEFAULT_LIMITED_POWER: HourWindow = { from: 8, until: 16 };
 
@@ -80,11 +77,27 @@ export function describeStaffing(hours: WeeklyHours): string {
 
 export type ReceivingWindows = {
   staffed: HourWindow;
-  /** Staffed and powered. Null when the site never has power while it's staffed. */
+  /** Staffed and powered. Null when the site never has power while it's staffed: it can't take
+   *  in medicines at all today. It's still analyzed; the optimizer counts it as the worst off. */
   today: HourWindow | null;
   /** With solar power, power is no longer the limit: the staffed hours. */
   withSolar: HourWindow;
 };
+
+/**
+ * A warehouse or clinic that can't take in medicines at all today: it never has grid power while
+ * it's staffed. It's still on the map and in the analysis (drawn in black and white until solar
+ * powers it).
+ */
+export function cannotReceiveToday(site: {
+  kind: string;
+  hours: WeeklyHours;
+  gridPower: GridPower;
+}): boolean {
+  if (site.kind === "port") return false;
+  const windows = receivingWindows(site.hours, site.gridPower);
+  return windows !== null && windows.today === null;
+}
 
 /** When a site can take in medicines today and with solar. Null if its hours can't be modelled. */
 export function receivingWindows(hours: WeeklyHours, power: GridPower): ReceivingWindows | null {

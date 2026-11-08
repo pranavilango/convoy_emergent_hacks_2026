@@ -4,8 +4,9 @@
 //!
 //! The network is a connected, directed, tripartite acyclic graph:
 //! `source -> pass-through -> destination`. Every pass-through and destination
-//! has a daily opening window `[a, b]` (whole hours, `0 <= a < b < 24`);
-//! sources are always available. Given a budget of `n` nodes, the solver picks
+//! has a daily opening window `[a, b]` (whole hours, `0 <= a <= b < 24`), or is
+//! *closed* without solar power (it can't take in deliveries at all; see
+//! [`CLOSED_WAIT_HOURS`]); sources are always available. Given a budget of `n` nodes, the solver picks
 //! the pass-throughs/destinations that get solar power so that the weighted
 //! time-to-delivery of the whole network is minimised. A node with solar power
 //! switches to its *solar window* (default `[0, 23]`, open 24/7; a site that
@@ -54,6 +55,11 @@ pub const TRANSIT_SPEED_KPH: f64 = 60.0;
 pub const EARTH_RADIUS_KM: f64 = 6371.0088;
 /// Length of the repeating opening-hours clock.
 pub const HOURS_PER_DAY: f64 = 24.0;
+/// What a delivery waits at a node that is closed without solar power
+/// ([`TimeWindow::CLOSED`]): a full day. That is longer than any open node can
+/// make a delivery wait (at most 23 h, for a one-hour window), so a closed node
+/// always counts as the worst off, and solar that opens it shows the full gain.
+pub const CLOSED_WAIT_HOURS: f64 = HOURS_PER_DAY;
 
 /// Tolerance when deciding whether a clock reading lies on a window boundary.
 const CLOCK_EPSILON: f64 = 1e-9;
@@ -72,8 +78,10 @@ pub enum ModelError {
     InvalidLatitude(f64),
     #[error("longitude {0} must be a finite value in [-180, 180]")]
     InvalidLongitude(f64),
-    #[error("opening window [{start}, {end}] is invalid: need 0 <= start < end < 24")]
+    #[error("opening window [{start}, {end}] is invalid: need 0 <= start <= end < 24")]
     InvalidWindow { start: i64, end: i64 },
+    #[error("a closed node can't also have open_from/open_until")]
+    ClosedWithWindow,
     #[error("solar window [{solar_start}, {solar_end}] must contain the opening window [{start}, {end}]")]
     SolarWindowTooNarrow {
         start: u8,
@@ -215,27 +223,41 @@ impl Coordinate {
 }
 
 /// Daily opening interval written `[start, end]` in whole hours,
-/// `0 <= start < end < 24`, meaning the half-open span `[start, end + 1)`.
+/// `0 <= start <= end < 24`, meaning the half-open span `[start, end + 1)`
+/// (so `[8, 8]` is open for one hour, 08:00-09:00). Or [`TimeWindow::CLOSED`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TimeWindow {
     start: u8,
     end: u8,
+    closed: bool,
 }
 
 impl TimeWindow {
     /// What a node with solar power gets: `[0, 23]`, i.e. open 24/7.
-    pub const ALWAYS_OPEN: TimeWindow = TimeWindow { start: 0, end: 23 };
+    pub const ALWAYS_OPEN: TimeWindow = TimeWindow { start: 0, end: 23, closed: false };
+
+    /// Never open: a node that can't take in deliveries at all without solar
+    /// power (e.g. a site that is never staffed while it has grid power).
+    /// Waiting for it takes [`CLOSED_WAIT_HOURS`]. Only an opening window can be
+    /// closed; a solar window always has hours.
+    pub const CLOSED: TimeWindow = TimeWindow { start: 0, end: 0, closed: true };
 
     pub fn new(start: i64, end: i64) -> Result<Self, ModelError> {
-        if (0..24).contains(&start) && (0..24).contains(&end) && start < end {
+        if (0..24).contains(&start) && (0..24).contains(&end) && start <= end {
             // Both values are in 0..24, so the narrowing casts are lossless.
             Ok(Self {
                 start: start as u8,
                 end: end as u8,
+                closed: false,
             })
         } else {
             Err(ModelError::InvalidWindow { start, end })
         }
+    }
+
+    /// Whether this is [`TimeWindow::CLOSED`] (its `start`/`end` mean nothing then).
+    pub fn is_closed(self) -> bool {
+        self.closed
     }
 
     pub fn start(self) -> u8 {
@@ -246,14 +268,15 @@ impl TimeWindow {
         self.end
     }
 
-    /// Whether `self` covers every hour that `other` does.
+    /// Whether `self` covers every hour that `other` does. Anything contains a
+    /// closed window; a closed window contains only another closed one.
     pub fn contains(self, other: TimeWindow) -> bool {
-        self.start <= other.start && other.end <= self.end
+        other.closed || (!self.closed && self.start <= other.start && other.end <= self.end)
     }
 
     /// Whether the window covers the whole day (`[0, 23]`).
     pub fn is_always_open(self) -> bool {
-        self.start == 0 && self.end == 23
+        !self.closed && self.start == 0 && self.end == 23
     }
 
     /// Hours to wait, when arriving at absolute time `clock` (hours, may exceed
@@ -261,7 +284,11 @@ impl TimeWindow {
     ///
     /// Open means `start <= time_of_day < end + 1`. Clock values within
     /// `CLOCK_EPSILON` of a boundary are snapped onto it to absorb float noise.
+    /// A closed window always takes [`CLOSED_WAIT_HOURS`].
     pub fn wait_hours(self, clock: f64) -> f64 {
+        if self.closed {
+            return CLOSED_WAIT_HOURS;
+        }
         if self.is_always_open() {
             return 0.0;
         }
@@ -1112,8 +1139,13 @@ pub enum NodeRecord {
         id: String,
         latitude: f64,
         longitude: f64,
-        open_from: i64,
-        open_until: i64,
+        #[serde(default)]
+        open_from: Option<i64>,
+        #[serde(default)]
+        open_until: Option<i64>,
+        /// Closed without solar power: give no `open_from`/`open_until`.
+        #[serde(default)]
+        closed: bool,
         #[serde(default)]
         solar_open_from: Option<i64>,
         #[serde(default)]
@@ -1123,8 +1155,13 @@ pub enum NodeRecord {
         id: String,
         latitude: f64,
         longitude: f64,
-        open_from: i64,
-        open_until: i64,
+        #[serde(default)]
+        open_from: Option<i64>,
+        #[serde(default)]
+        open_until: Option<i64>,
+        /// Closed without solar power: give no `open_from`/`open_until`.
+        #[serde(default)]
+        closed: bool,
         #[serde(default)]
         solar_open_from: Option<i64>,
         #[serde(default)]
@@ -1159,10 +1196,11 @@ impl NodeRecord {
                 longitude,
                 open_from,
                 open_until,
+                closed,
                 solar_open_from,
                 solar_open_until,
             } => {
-                let window = TimeWindow::new(open_from, open_until)?;
+                let window = opening_window(closed, open_from, open_until)?;
                 Ok(Node::PassThrough {
                     id,
                     location: Coordinate::new(latitude, longitude)?,
@@ -1176,11 +1214,12 @@ impl NodeRecord {
                 longitude,
                 open_from,
                 open_until,
+                closed,
                 solar_open_from,
                 solar_open_until,
                 priority,
             } => {
-                let window = TimeWindow::new(open_from, open_until)?;
+                let window = opening_window(closed, open_from, open_until)?;
                 Ok(Node::Destination {
                     id,
                     location: Coordinate::new(latitude, longitude)?,
@@ -1190,6 +1229,24 @@ impl NodeRecord {
                 })
             }
         }
+    }
+}
+
+/// A node's window without solar power: `open_from`/`open_until`, or
+/// [`TimeWindow::CLOSED`] when the file says `"closed": true` (and gives neither).
+fn opening_window(
+    closed: bool,
+    from: Option<i64>,
+    until: Option<i64>,
+) -> Result<TimeWindow, ModelError> {
+    match (closed, from, until) {
+        (false, Some(a), Some(b)) => TimeWindow::new(a, b),
+        (true, None, None) => Ok(TimeWindow::CLOSED),
+        (true, _, _) => Err(ModelError::ClosedWithWindow),
+        (false, a, b) => Err(ModelError::InvalidWindow {
+            start: a.unwrap_or(-1),
+            end: b.unwrap_or(-1),
+        }),
     }
 }
 

@@ -1,5 +1,5 @@
 import { DAYS, formatRange, isOvernight } from "@/lib/demo/hours";
-import { formatWindow, MIN_WINDOW_HOURS, receivingWindows, windowHours } from "@/lib/demo/power";
+import { receivingWindows, windowHours } from "@/lib/demo/power";
 import type { Connection, Location } from "@/lib/demo/types";
 
 /**
@@ -10,8 +10,9 @@ import type { Connection, Location } from "@/lib/demo/types";
  *   every clinic is supplied;
  * - all sites form one connected network;
  * - warehouses and clinics are open at least one day, with no overnight shifts;
- * - each warehouse and clinic is staffed and powered for at least MIN_WINDOW_HOURS a day;
- * - at least one site loses power during its working hours (otherwise solar changes nothing);
+ * - at least one site loses power during its working hours (otherwise solar changes nothing).
+ * A site's grid power never blocks Analyze: one that's never powered while staffed, or only for
+ * an hour, is exactly what the optimizer is for, so it's always included;
  * - every clinic says how many people it serves;
  * - the budget covers at least one solar unit.
  * Returns an empty list when the network is ready.
@@ -73,19 +74,6 @@ export function analysisIssues(
     modelled++;
     const today = windows.today ? windowHours(windows.today) : 0;
     if (today < windowHours(windows.withSolar)) powerGaps++;
-    if (windowHours(windows.staffed) < MIN_WINDOW_HOURS) {
-      issues.push(
-        `${l.name} is staffed for under ${MIN_WINDOW_HOURS} hours a day. Give it longer hours.`,
-      );
-    } else if (!windows.today) {
-      issues.push(
-        `${l.name} never has power while it's staffed (power ${formatWindow(l.gridPower!)}, staffed ${formatWindow(windows.staffed)}). Widen its power or working hours.`,
-      );
-    } else if (windowHours(windows.today) < MIN_WINDOW_HOURS) {
-      issues.push(
-        `${l.name} is staffed and powered for only ${windowHours(windows.today)} hour a day (${formatWindow(windows.today)}). The optimizer needs at least ${MIN_WINDOW_HOURS}, so widen its power or working hours.`,
-      );
-    }
   }
 
   if (modelled > 0 && powerGaps === 0) {
