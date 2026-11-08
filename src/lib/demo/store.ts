@@ -95,6 +95,9 @@ function newId(): string {
 }
 
 export const demoActions = {
+  replaceState(next: DemoState) {
+    dispatch({ type: "replace", state: next });
+  },
   addLocation(location: NewLocation): string {
     const id = newId();
     dispatch({ type: "addLocation", id, createdAt: new Date().toISOString(), location });

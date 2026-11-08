@@ -7,10 +7,11 @@ import { useEffect, useState, type ReactNode } from "react";
 import { ConvoyMark } from "@/components/convoy-mark";
 import { findConnection, outgoing } from "@/lib/demo/graph";
 import { unitsAffordable } from "@/lib/demo/budget";
-import { analysisIssues } from "@/lib/solar-allocation/readiness";
+import { createSampleNetwork } from "@/lib/demo/sample-network";
 import { canSupply, KIND_INFO, LOCATION_KINDS, SUPPLIES } from "@/lib/demo/kinds";
 import { demoActions, useDemoState } from "@/lib/demo/store";
 import type { Location } from "@/lib/demo/types";
+import { analysisIssues } from "@/lib/solar-allocation/readiness";
 
 import { AddLocationForm } from "./add-location-form";
 import { BudgetSection } from "./budget-section";
@@ -194,6 +195,34 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
 
   const panel = (
     <div className="space-y-12 px-6 py-8 md:px-8">
+      <section className="space-y-3 border-b border-foreground/20 pb-8">
+        <p className="font-mono text-[11px] uppercase tracking-wider text-white/60">
+          _Ready for the judges
+        </p>
+        <p className="text-sm leading-relaxed text-white/80">
+          Explore a sample medical supply corridor in Ghana, then see how the available solar units
+          change the network-wide estimate.
+        </p>
+        <Button
+          variant="outline"
+          className="w-full"
+          onClick={() => {
+            demoActions.replaceState(createSampleNetwork());
+            setSelection(null);
+            setConnectingFrom(null);
+            setAnalysisStatus("idle");
+            setAnalysisResult(null);
+            setAnalyzedKey(null);
+          }}
+        >
+          Load Ghana sample network
+        </Button>
+        {locations.length > 0 && (
+          <p className="text-xs text-white/50">
+            Loading this sample replaces the current network and budget.
+          </p>
+        )}
+      </section>
       <AddLocationForm
         searchAvailable={problem === null}
         onAdded={(id) => {
