@@ -306,6 +306,20 @@
     }
   }
 
+  /* The demo fills the window on desktop: the window itself never scrolls, only the editor
+     column does. (Phones stack map and editor, so the page scrolls there.) */
+  @media (min-width: 48rem) {
+    html:has(.demo-shell),
+    body:has(.demo-shell) {
+      overflow: hidden;
+    }
+  }
+
+  /* The demo's guided tour scrolls each part it explains to the top, with a little room. */
+  [data-tour] {
+    scroll-margin: 1.5rem;
+  }
+
   /* Map location squares: no focus outline after a mouse click (the larger square and its card
      already show the selection), but keep it for keyboard users. */
   gmp-advanced-marker:focus:not(:focus-visible) {

@@ -9,6 +9,7 @@ import { HoursEditor } from "@/components/demo/hours-editor";
 import { cloneHours, DEFAULT_HOURS, type WeeklyHours } from "@/lib/demo/hours";
 import type { LocationKind } from "@/lib/demo/kinds";
 import { __resetDemoStore, demoActions, STORAGE_KEY, useDemoState } from "@/lib/demo/store";
+import { __resetTour, TOUR_STORAGE_KEY } from "@/lib/demo/tour";
 
 // The Maps SDK can't run in jsdom. These tests cover the no-key path and pure UI; the map itself
 // is exercised manually against the real API.
@@ -23,7 +24,12 @@ vi.mock("@vis.gl/react-google-maps", () => ({
 
 beforeEach(() => {
   window.localStorage.clear();
-  act(() => __resetDemoStore());
+  // These tests are about the editor; the first-visit tour has its own tests (tour.test.tsx).
+  window.localStorage.setItem(TOUR_STORAGE_KEY, "seen");
+  act(() => {
+    __resetDemoStore();
+    __resetTour();
+  });
 });
 
 /** Expand a location's row in the Locations section. */
@@ -103,7 +109,7 @@ describe("DemoApp without an API key", () => {
 
   it("links back to the landing page", () => {
     render(<DemoApp />);
-    expect(screen.getByRole("link", { name: "← Back to site" })).toHaveAttribute("href", "/");
+    expect(screen.getByRole("link", { name: "Back to site" })).toHaveAttribute("href", "/");
   });
 
   it("keeps the desktop page fixed while the network editor scrolls", () => {

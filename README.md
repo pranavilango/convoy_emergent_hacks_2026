@@ -64,11 +64,23 @@ The demo uses the same night theme: `.theme-night` (in `src/app/globals.css`) on
 turns its `background`/`foreground` tokens black and white, with aquamarine for primary actions
 and "on" states.
 
-"Try the demo" opens a map editor for a medical supply network. Search an address and add it as a
+"Try the demo" opens a map editor for a medical supply network. The editor column runs in the
+order you'd fill it in: **01 Budget** (the main limit), **02 Add a location**, **03 Location
+types**, **04 Locations**, **05 Connections**, **06 Analysis**. On desktop the page fills the
+window and only that column scrolls. A floating **Load Ghana sample network** button (bottom right)
+fills in a ready-made corridor for a demo, asking first if it would replace a network.
+
+On a first visit a short tooltip tour explains each part, right next to it, with a thin outline
+around the part it's on. It doesn't dim or block the page. Skip or Escape ends it, the arrow keys
+step through it, and the header's **Tour** button replays it. Having seen it is remembered in
+`localStorage` (key `convoy.tour.v1`). The stops are in `guided-tour.tsx`; each part they point at
+is marked `data-tour`.
+
+Search an address and add it as a
 **port** (sea or air), **warehouse**, or **clinic** (with the population it serves); it's pinned
 on the map as a colored square marked P, W, or C. Warehouses and clinics get working hours and
 **grid power** hours (all day, or one daily window such as 08:00–16:00 where power is rationed);
-ports are always open. **Load Ghana sample network** fills in a ready-made corridor for a demo. Connect sites to show how supplies flow: select a port or warehouse, press
+ports are always open. Connect sites to show how supplies flow: select a port or warehouse, press
 **Connect**, then click the sites it supplies (click again to unlink). You can also connect from
 the panel. Everything is saved in the browser (`localStorage`, key `convoy.demo.v2`). Each visitor
 sees only their own data, and clearing site data resets it.
