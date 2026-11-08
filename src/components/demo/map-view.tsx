@@ -48,6 +48,7 @@ export function MapView({
   selection,
   connectingFrom,
   focus,
+  allocatedIds = [],
   onSelect,
   onConnectTo,
   onStartConnecting,
@@ -61,6 +62,7 @@ export function MapView({
   /** When set, clicking a location this one can supply connects (or disconnects) it. */
   connectingFrom: string | null;
   focus: FocusRequest | null;
+  allocatedIds?: string[];
   onSelect: (selection: Selection) => void;
   onConnectTo: (locationId: string) => void;
   onStartConnecting: (locationId: string) => void;
@@ -155,6 +157,7 @@ export function MapView({
             key={location.id}
             location={location}
             state={state}
+            allocated={allocatedIds.includes(location.id)}
             size={size}
             onClick={() => {
               if (!connectingFrom) onSelect({ kind: "location", id: location.id });
@@ -261,11 +264,13 @@ type SquareState = "idle" | "active" | "linked" | "candidate" | "unavailable";
 function LocationSquare({
   location,
   state,
+  allocated,
   size,
   onClick,
 }: {
   location: Location;
   state: SquareState;
+  allocated: boolean;
   /** Side in px at the current zoom (selected squares are a little bigger). */
   size: number;
   onClick: () => void;
@@ -287,7 +292,8 @@ function LocationSquare({
           className={cn(
             "flex items-center justify-center rounded-sm border-2 border-ink font-semibold leading-none text-ink shadow-[0_0_0_1.5px_var(--color-ink-foreground)] transition-[width,height,font-size,transform] duration-150",
             state !== "active" && "group-hover:scale-125",
-            state === "linked" &&
+            allocated && "shadow-[0_0_0_1.5px_var(--color-ink-foreground),0_0_0_5px_var(--color-aqua)]",
+            state === "linked" && !allocated &&
               "shadow-[0_0_0_1.5px_var(--color-ink-foreground),0_0_0_4px_var(--color-ink)]",
             state === "candidate" && "cursor-crosshair",
             state === "unavailable" && "cursor-not-allowed opacity-35 group-hover:scale-100",

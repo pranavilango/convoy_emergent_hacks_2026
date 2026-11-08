@@ -10,6 +10,7 @@ import { unitsAffordable } from "@/lib/demo/budget";
 import { canSupply, KIND_INFO, LOCATION_KINDS, SUPPLIES } from "@/lib/demo/kinds";
 import { demoActions, useDemoState } from "@/lib/demo/store";
 import type { Location } from "@/lib/demo/types";
+import { createSampleNetwork } from "@/lib/demo/sample-network";
 
 import { AddLocationForm } from "./add-location-form";
 import { BudgetSection } from "./budget-section";
@@ -117,13 +118,13 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
     setConnectingFrom(null);
   }
 
-  async function analyzeNetwork() {
+  async function analyzeNetwork(unitsOverride?: number) {
     setAnalysisStatus("loading");
     setAnalysisResult(null);
     setAnalysisError(null);
 
     try {
-      const solarUnits = affordableSolarUnits;
+      const solarUnits = unitsOverride ?? affordableSolarUnits;
       if (solarUnits === null || solarUnits < 1 || !Number.isSafeInteger(solarUnits)) {
         throw new Error("Enter a budget that covers at least one solar unit before analyzing.");
       }
@@ -187,6 +188,32 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
 
   const panel = (
     <div className="space-y-12 px-6 py-8 md:px-8">
+      <section className="space-y-3 border-b border-foreground/20 pb-8">
+        <p className="font-mono text-[11px] uppercase tracking-wider opacity-65">_Ready for the judges</p>
+        <p className="text-sm leading-relaxed opacity-80">
+          Explore a sample medical supply corridor in Ghana, then vary the number of solar units to
+          see how the network-wide estimate responds.
+        </p>
+        <Button
+          variant="outline"
+          className="w-full"
+          onClick={() => {
+            demoActions.replaceState(createSampleNetwork());
+            setSelection(null);
+            setConnectingFrom(null);
+            setAnalysisStatus("idle");
+            setAnalysisResult(null);
+            setFocus({ ids: [], nonce: Date.now() });
+          }}
+        >
+          Load Ghana sample network
+        </Button>
+        {locations.length > 0 && (
+          <p className="text-xs opacity-60">
+            Loading this sample replaces the current network and budget.
+          </p>
+        )}
+      </section>
       <AddLocationForm
         searchAvailable={problem === null}
         onAdded={(id) => {
@@ -218,7 +245,7 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
           24/7, then review the selected sites and delivery-time metrics.
         </p>
         <Button
-          onClick={analyzeNetwork}
+          onClick={() => void analyzeNetwork()}
           disabled={
             !hasRequiredLocationKinds ||
             affordableSolarUnits === null ||
@@ -237,7 +264,9 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
           </p>
         )}
         {affordableSolarUnits === null ? (
-          <p className="text-xs opacity-70">Enter the solar unit cost and total budget to analyze.</p>
+          <p className="text-xs opacity-70">
+            Enter the solar unit cost and total budget to analyze.
+          </p>
         ) : affordableSolarUnits < 1 ? (
           <p className="text-xs opacity-70">The budget must cover at least one solar unit.</p>
         ) : null}
@@ -265,9 +294,18 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
             setSelection(null);
           }}
           onBackgroundClick={() => (connectingFrom ? stopConnecting() : setSelection(null))}
+          allocatedIds={
+            analysisStatus === "ready" ? (analysisResult?.allocation.selected ?? []) : []
+          }
         />
       )}
-      {!problem && <Legend locations={locations} connectionCount={connections.length} />}
+      {!problem && (
+        <Legend
+          locations={locations}
+          connectionCount={connections.length}
+          allocatedCount={analysisStatus === "ready" ? (analysisResult?.allocation.selected.length ?? 0) : 0}
+        />
+      )}
       {connectingLocation && (
         <ConnectBanner
           origin={connectingLocation}
@@ -280,15 +318,15 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
   );
 
   const layout = (
-    <div className="theme-night flex min-h-dvh flex-col bg-background font-display text-foreground md:h-dvh">
+    <div className="theme-night flex min-h-dvh flex-col bg-background font-display text-foreground md:h-dvh md:min-h-0">
       <DemoHeader count={locations.length} connectionCount={connections.length} />
-      <div className="flex flex-1 flex-col md:grid md:min-h-0 md:grid-cols-[minmax(22rem,26rem)_1fr]">
-        <section aria-label="Map" className="order-1 h-[55vh] md:order-2 md:h-auto">
+      <div className="flex flex-1 flex-col md:grid md:min-h-0 md:grid-cols-[minmax(22rem,26rem)_1fr] md:grid-rows-[minmax(0,1fr)] md:overflow-hidden">
+        <section aria-label="Map" className="order-1 h-[55vh] md:order-2 md:h-auto md:min-h-0">
           {mapArea}
         </section>
         <aside
           aria-label="Network editor"
-          className="order-2 border-foreground/30 md:order-1 md:overflow-y-auto md:border-r"
+          className="order-2 border-foreground/30 md:order-1 md:min-h-0 md:overflow-y-auto md:border-r"
         >
           {panel}
         </aside>
@@ -299,6 +337,9 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
           result={analysisResult}
           locations={locations}
           error={analysisError}
+          maxUnits={locations.filter((location) => location.kind !== "port").length}
+          unitCost={budget.unitCost ?? 0}
+          onReanalyze={(units) => void analyzeNetwork(units)}
           onClose={() => {
             if (analysisStatus !== "loading") setAnalysisStatus("idle");
           }}
@@ -424,9 +465,11 @@ function DemoHeader({ count, connectionCount }: { count: number; connectionCount
 function Legend({
   locations,
   connectionCount,
+  allocatedCount,
 }: {
   locations: Location[];
   connectionCount: number;
+  allocatedCount: number;
 }) {
   return (
     // Bottom-left, above Google's logo, so it never collides with the connect banner up top.
@@ -451,6 +494,13 @@ function Legend({
             {String(connectionCount).padStart(2, "0")}
           </span>
         </li>
+        {allocatedCount > 0 && (
+          <li className="flex items-center gap-2 border-t border-ink-foreground/15 pt-1.5">
+            <span aria-hidden className="inline-block h-3 w-3 rounded-sm ring-2 ring-aqua" />
+            <span>Solar priority</span>
+            <span className="ml-auto pl-3 opacity-60">{allocatedCount}</span>
+          </li>
+        )}
       </ul>
     </div>
   );

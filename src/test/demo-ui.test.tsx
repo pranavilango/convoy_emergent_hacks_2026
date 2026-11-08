@@ -151,7 +151,7 @@ describe("solar allocation analysis", () => {
     fireEvent.click(analyzeButton);
     expect(await screen.findByRole("dialog", { name: "Network analysis" })).toBeInTheDocument();
     expect(await screen.findByText("These sites reduce modeled delivery times.")).toBeInTheDocument();
-    expect(screen.getByText(/exact solver selected 2 of 2 requested solar units/)).toBeInTheDocument();
+    expect(screen.getByText("2 of 2 requested solar units selected.")).toBeInTheDocument();
     expect(screen.getByText("Mwanza Clinic")).toBeInTheDocument();
     expect(screen.getByText("Central Store")).toBeInTheDocument();
     expect(screen.getByText(/21\.64 h before upgrades/)).toBeInTheDocument();

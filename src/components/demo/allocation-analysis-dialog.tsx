@@ -1,6 +1,6 @@
 "use client";
 
-import type { KeyboardEvent } from "react";
+import { useEffect, useState, type KeyboardEvent } from "react";
 
 import type { Location } from "@/lib/demo/types";
 import type { SolarAllocation } from "@/lib/solar-allocation/analyze";
@@ -18,13 +18,26 @@ export function AllocationAnalysisDialog({
   locations,
   error,
   onClose,
+  onReanalyze,
+  maxUnits,
+  unitCost,
 }: {
   status: "loading" | "ready" | "error";
   result: AllocationAnalysisResult | null;
   locations: Location[];
   error: string | null;
   onClose: () => void;
+  onReanalyze: (units: number) => void;
+  maxUnits: number;
+  unitCost: number;
 }) {
+  const [scenarioUnits, setScenarioUnits] = useState(result?.allocation.n ?? 1);
+  useEffect(() => {
+    if (result) setScenarioUnits(result.allocation.n);
+  }, [result]);
+  useEffect(() => {
+    setScenarioUnits((units) => Math.min(units, Math.max(1, maxUnits)));
+  }, [maxUnits]);
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key !== "Escape" || status === "loading") return;
     event.preventDefault();
@@ -96,6 +109,26 @@ export function AllocationAnalysisDialog({
 
         {status === "ready" && result && (
           <div className="space-y-7 py-6">
+            <section aria-label="Budget scenario" className="rounded-sm border border-foreground/20 p-4">
+              <div className="flex items-baseline justify-between gap-4">
+                <label htmlFor="scenario-units" className="font-mono text-[11px] uppercase tracking-wider opacity-70">_What if funding changes?</label>
+                <span className="font-mono text-sm">
+                  {scenarioUnits} {scenarioUnits === 1 ? "unit" : "units"} · $
+                  {(scenarioUnits * unitCost).toLocaleString("en-US")}
+                </span>
+              </div>
+              <input id="scenario-units" type="range" min={1} max={Math.max(1, maxUnits)} value={Math.min(scenarioUnits, maxUnits)} onChange={(event) => setScenarioUnits(Number(event.target.value))} className="mt-3 w-full accent-aqua" />
+              <div className="mt-2 flex items-center justify-between gap-4 text-xs opacity-70">
+                <span>See how coverage changes as funding grows.</span>
+                <Button
+                  size="sm"
+                  onClick={() => onReanalyze(scenarioUnits)}
+                  disabled={scenarioUnits === result.allocation.n}
+                >
+                  Re-run
+                </Button>
+              </div>
+            </section>
             <section aria-labelledby="allocation-impact-title">
               <h3
                 id="allocation-impact-title"
@@ -124,8 +157,8 @@ export function AllocationAnalysisDialog({
                 _Selected 24/7 sites
               </h3>
               <p className="mt-2 text-sm leading-relaxed">
-                The {result.allocation.solver} solver selected {result.allocation.selected.length}{" "}
-                of {result.allocation.n} requested solar units.
+                {result.allocation.selected.length} of {result.allocation.n} requested solar units
+                selected.
               </p>
               <ol className="mt-4 divide-y divide-foreground/20 border-y border-foreground/20">
                 {result.allocation.selected.map((id) => {
