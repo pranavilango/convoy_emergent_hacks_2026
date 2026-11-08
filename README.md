@@ -3,18 +3,23 @@
 A solar power allocation planner for medical warehouses and clinics in low-resource regions.
 
 **Problem.** A rural clinic keeps vaccines and insulin in a fridge that runs on a grid that keeps
-cutting out. Solar panels and batteries fix that, but budgets cover a few sites, never all of them,
-and today they go to whoever asks first rather than where they protect the most care.
+cutting out, so it can only take in medicines while it's both staffed and powered. Solar power
+fixes that, but budgets cover a few sites, never all of them, and today they go to whoever asks
+first rather than where they protect the most care.
 
 **Solution.** Convoy maps a medical supply network (the ports supplies arrive through, the
 warehouses that store them, and the clinics that use them) and decides where solar power does the
-most good. It weighs how supplies flow between sites, how far they travel, and when each site is
-staffed and needs power, then says which sites to equip first and what to give them.
+most good. It weighs how supplies flow between sites, how far they travel, when each site is
+staffed, and when it has grid power, then says which sites to give solar first, how much that
+shortens deliveries for the people they serve, and why (explained by Gemini).
 
 ## Stack
 
 - [Next.js 16](https://nextjs.org) (App Router) + React 19 + TypeScript
-- Rust `medroute` allocation service (Axum)
+- Rust `medroute` allocation engine, compiled to WebAssembly and run inside the app (also
+  available as an optional Axum HTTP service)
+- Google Maps JavaScript API + Places API (New) for the map and address search
+- Gemini (`gemini-3.5-flash-lite` by default) to explain each plan
 - Tailwind CSS v4 (config in `src/app/globals.css`)
 - Vitest + Testing Library
 - Hosted on [Vercel](https://vercel.com)
@@ -64,29 +69,66 @@ The demo uses the same night theme: `.theme-night` (in `src/app/globals.css`) on
 turns its `background`/`foreground` tokens black and white, with aquamarine for primary actions
 and "on" states.
 
-"Try the demo" opens a map editor for a medical supply network. The editor column runs in the
-order you'd fill it in: **01 Budget** (the main limit), **02 Add a location**, **03 Location
-types**, **04 Locations**, **05 Connections**, **06 Analysis**. On desktop the page fills the
-window and only that column scrolls. A floating **Load Ghana sample network** button (bottom right)
-fills in a ready-made corridor for a demo, asking first if it would replace a network.
+"Try the demo" opens a map editor for a medical supply network: the map on the right, and an
+editor column on the left that runs in the order you'd fill it in:
+
+1. **Budget** — what one solar unit costs and the total to spend. This is the main limit: the
+   panel shows how many whole units it covers, and that's how many sites the optimizer picks.
+2. **Add a location** — search an address and add it as a **port** (sea or air), **warehouse**,
+   or **clinic** (with the population it serves). Warehouses and clinics also get working hours
+   and **grid power** hours (all day, or one daily window such as 08:00–16:00 where power is
+   rationed); a note under the power hours says when the site can take in medicines today and
+   with solar. Ports are always open.
+3. **Location types** — the three kinds, how many of each are on the map, and how supplies flow
+   (port → warehouse → clinic).
+4. **Locations** — every site; open one to rename it or change its type, hours, grid power, or
+   population.
+5. **Connections** — who supplies whom. Add links here, or select a port or warehouse on the map,
+   press **Connect**, then click the sites it supplies (click again to unlink).
+6. **Analysis** — what's still missing, then **Analyze**.
+
+Sites are pinned on the map as colored squares marked P, W, or C. A warehouse or clinic that never
+has grid power while it's staffed (so it can't take in medicines at all today) is drawn in black
+and white, letter and all, with a "No power while staffed" row in the legend. After an analysis,
+the sites chosen for solar glow with an aquamarine ring until the network changes; a black and
+white site that's chosen powers back on in its colour, and one that isn't stays black and white.
+
+On desktop the page fills the window and only the editor column scrolls (phones stack the map
+above the editor and scroll normally). Everything is saved in the browser (`localStorage`, key
+`convoy.demo.v2`). Each visitor sees only their own data, and clearing site data resets it.
 
 On a first visit a short tooltip tour explains each part, right next to it, with a thin outline
 around the part it's on. It doesn't dim or block the page. Skip or Escape ends it, the arrow keys
-step through it, and the header's **Tour** button replays it. Having seen it is remembered in
-`localStorage` (key `convoy.tour.v1`). The stops are in `guided-tour.tsx`; each part they point at
-is marked `data-tour`.
+step through it, and the aqua-outlined **Tour** button in the header replays it. Having seen it is
+remembered in `localStorage` (key `convoy.tour.v1`). The stops are in `guided-tour.tsx`; each part
+they point at is marked `data-tour`.
 
-Search an address and add it as a
-**port** (sea or air), **warehouse**, or **clinic** (with the population it serves); it's pinned
-on the map as a colored square marked P, W, or C. Warehouses and clinics get working hours and
-**grid power** hours (all day, or one daily window such as 08:00–16:00 where power is rationed);
-ports are always open. Connect sites to show how supplies flow: select a port or warehouse, press
-**Connect**, then click the sites it supplies (click again to unlink). You can also connect from
-the panel. Everything is saved in the browser (`localStorage`, key `convoy.demo.v2`). Each visitor
-sees only their own data, and clearing site data resets it.
+### Ghana sample network
 
-Use **Load Ghana sample network** for a prebuilt seven-site scenario and a $24,000 budget. Loading
-the sample replaces the network and budget currently saved in that browser.
+The floating **Load Ghana sample network** button (bottom right) fills in a ready-made corridor
+for a live demo (`src/lib/demo/sample-network.ts`). It replaces the network and budget saved in
+that browser, asking first if there's already a network on the map. It has seven sites, one
+supply chain from Tema Port through two warehouses to four clinics, on a rationed grid where each
+site has power at different hours:
+
+| Site                     | Supplied by              | Staffed               | Grid power  | Serves  |
+| ------------------------ | ------------------------ | --------------------- | ----------- | ------- |
+| Tema Port                | —                        | 24/7                  | —           | —       |
+| Accra Medical Warehouse  | Tema Port                | Mon–Sat 07:00–19:00   | 06:00–18:00 | —       |
+| Kumasi Medical Warehouse | Tema Port                | Every day 06:00–22:00 | 10:00–18:00 | —       |
+| Korle Bu Clinic          | Accra Medical Warehouse  | 24/7                  | 06:00–18:00 | 450,000 |
+| Cape Coast Clinic        | Accra Medical Warehouse  | Every day 08:00–17:00 | 07:00–19:00 | 280,000 |
+| Komfo Anokye Clinic      | Kumasi Medical Warehouse | 24/7                  | 14:00–22:00 | 620,000 |
+| Tamale Clinic            | Kumasi Medical Warehouse | Every day 08:00–20:00 | 16:00–24:00 | 390,000 |
+
+The budget is $36,000 at $12,000 a unit, so **3 solar units**. Analyze puts them on **Kumasi
+Medical Warehouse**, **Komfo Anokye Clinic**, and **Tamale Clinic**, cutting the
+population-weighted wait for supplies from about **10.3 h to 6.9 h** (a third shorter) across
+1,740,000 people. Each unit helps, by less each time: 1 unit → 9.3 h, 2 → 7.8 h, 3 → 6.9 h. Cape
+Coast's power already covers its staffed hours, so solar wouldn't change anything there. (The
+figures come from the engine and are the same every run; Gemini's wording varies.)
+
+### Data model
 
 The network is a directed graph, ready to hand to the allocation engine:
 
@@ -95,15 +137,16 @@ The network is a directed graph, ready to hand to the allocation engine:
   ranges per day (`mon`–`sun`), in minutes since midnight. An empty list means closed,
   `close < open` runs past midnight, and `close: 1440` means "until midnight". Ports are always
   24/7. `gridPower` is `{ from, until }` in whole hours (0–24, the same every day), or null for a
-  reliable grid (and always for ports). Clinics have `population`, the number of people they serve (a whole number from 1 to
-  100,000,000); it's null for other kinds, and for a clinic until it's set.
+  reliable grid (and always for ports). Clinics have `population`, the number of people they serve
+  (a whole number from 1 to 100,000,000); it's null for other kinds, and for a clinic until it's
+  set.
 - **Connections** are the edges, stored as `{ id, fromId, toId }`. Supplies flow one way, so the
   only allowed links are port → warehouse and warehouse → clinic (no loops, nothing backwards,
   no skipping a step). Changing a site's type removes links that no longer fit, after asking.
 - **Budget** is stored as `budget: { unitCost, total }`: what one solar power unit costs and the
   total money available, in US dollars (positive, at most two decimal places), or `null` until
-  entered. The panel shows how many whole units the budget covers. That count is sent to the Rust
-  allocator as the number of sites to upgrade.
+  entered. The number of whole units it covers is sent to the Rust allocator as the number of
+  sites to upgrade.
 - **Distance** isn't stored: it's the straight-line (great-circle) distance between the two ends,
   from `distanceKm()` in `geometry.ts`, so it's always in step with the locations.
 
@@ -113,9 +156,9 @@ discarded on load.
 - Page: `src/app/demo/page.tsx`. UI: `src/components/demo/`.
 - State: `src/lib/demo/`. `kinds.ts` defines the three kinds and the supply rule, `reducer.ts`
   enforces it, `graph.ts` has the connection helpers, `hours.ts` working hours, `power.ts` grid
-  power and when a site can take in medicines, `sample-network.ts` the Ghana sample, `population.ts`
-  clinic population, `budget.ts` the solar budget, `geometry.ts` distance and marker sizing, and
-  `store.ts` handles saving.
+  power and when a site can take in medicines, `sample-network.ts` the Ghana sample,
+  `population.ts` clinic population, `budget.ts` the solar budget, `geometry.ts` distance and
+  marker sizing, `tour.ts` whether the tour is showing, and `store.ts` handles saving.
 
 ### Rust allocation service
 
@@ -135,18 +178,6 @@ The original HTTP service still works (contract in [API.md](API.md)): run it wit
 the built-in engine. The HTTP server is the crate's default `server` feature; the WebAssembly
 build uses the library without it.
 
-Before Analyze unlocks, the panel lists anything the engine would reject, by site name: unlinked
-sites, separate networks, sites closed all week or with overnight shifts, a network with no power
-cuts at all (solar would change nothing), clinics without a population, or a budget below one unit
-(`src/lib/solar-allocation/readiness.ts`). A site's power hours never block Analyze: a site that's
-staffed and powered for only an hour is modelled with that one hour, and one that's never powered
-while staffed (it can't take in medicines at all today) is sent to the engine as `closed`, where
-every delivery to it counts as a full day's wait. That makes it the worst off, so a big clinic in
-that state is near the top of the list for solar, which opens it for its staffed hours. A result shows the drop in population-weighted wait,
-each chosen site (when it takes in medicines today → with solar, people served, supply link), what each extra solar unit buys (the route also asks the engine for the best 1, 2, … units,
-up to 10), and Gemini's plain-language explanation built from those facts. Chosen sites glow on
-the map until the network changes.
-
 ### Google Maps setup
 
 1. In Google Cloud Console, enable **Maps JavaScript API** and **Places API (New)**, with billing
@@ -160,20 +191,40 @@ Without a key the demo still loads, shows how to configure it, and lists the loc
 
 ### Solar allocation analysis
 
-On `/demo`, add at least one port, warehouse, and clinic, then set a budget that covers at least one
-solar unit to enable **Analyze**. The Next.js server sends the graph and budget-derived unit count to
-the Rust optimizer. Gemini receives the backend result and network details to explain the selection;
-it does not choose sites or generate alternative allocations. The popup shows selected sites,
-weighted delivery-time metrics, and Gemini's explanation.
+**Analyze** unlocks once nothing the engine would reject is left. Until then the Analysis section
+lists what's missing, by site name (`src/lib/solar-allocation/readiness.ts`): at least one port,
+warehouse, and clinic; every site linked into one network; warehouses and clinics open at least
+one day, with no overnight shifts; at least one site that loses power during its working hours
+(otherwise solar would change nothing); a population for every clinic; and a budget that covers
+at least one unit.
 
-The weighted times are model estimates, not measured outcomes. The optimizer uses coordinates for
-transit time, opening windows for waiting time, and clinic population as a weight. A site can only
-take in medicines while it's staffed and has power to keep them cold, so its window today is its
-staffed hours (one daily span, from the earliest opening to the latest closing across the week)
-narrowed to its grid power hours. Solar lifts the power limit, so its window with solar is the
-staffed span; the engine gets both (`open_from`/`open_until` and `solar_open_from`/
-`solar_open_until`, see [API.md](API.md)). Validate the model against real operations data before
-acting on its recommendations.
+A site's power hours never block Analyze. A site can only take in medicines while it's staffed and
+has power to keep them cold, so its window today is its staffed hours (one daily span, from the
+earliest opening to the latest closing across the week) narrowed to its grid power hours. Solar
+lifts the power limit, so its window with solar is the staffed span. The engine gets both
+(`open_from`/`open_until` and `solar_open_from`/`solar_open_until`, see [API.md](API.md)). A site
+that's staffed and powered for only an hour is modelled with that one hour. One that's never
+powered while staffed is sent as `closed`: it stays in the network, and every delivery to it counts
+as a full day's wait (24 h, longer than any open site can cause). That makes it the worst off, so
+a big clinic in that state is near the top of the list for solar, which opens it for its staffed
+hours.
+
+The Next.js server sends the network and the budget's unit count to the Rust optimizer, which
+picks the sites. It also asks for the best sites at every smaller budget (1, 2, … units, up to
+10), which go to Gemini as context. Gemini receives the result and the network's facts (staffed
+hours, grid power, when each site takes in medicines today and with solar, people served, supply
+links and distances) and explains the choice in short bullets; it never chooses sites or suggests
+other allocations. The result popup shows:
+
+- **Estimated impact** — people served by all clinics, hours saved per person, the combined
+  people-hours, and the population-weighted wait before → after;
+- **Chosen for solar** — each chosen site: when it takes in medicines today → with solar (or
+  "Can't take in medicines today"), its staffed and grid power hours, people served, and its
+  supplier and distance;
+- **Why these sites** — Gemini's explanation;
+- what the model assumes. The weighted times are model estimates, not measured outcomes: travel is
+  a straight line at 60 km/h, and clinics count by the people they serve. Validate them against
+  real operations data before acting on the recommendations.
 
 The route is public and every new analysis calls Gemini, so it's protected
 (`src/lib/solar-allocation/guard.ts`): each IP gets 30 analyses per 10 minutes and each server
@@ -181,11 +232,13 @@ instance 300 per hour (then `429` with `Retry-After`), and a network analyzed in
 answered from cache, instantly and without counting. Limits are per instance; for a hard global cap
 also add a rate-limit rule in Vercel's Firewall.
 
-The Next.js route accepts a positive integer `n` and a `network` containing site coordinates,
-weekly hours, grid power, clinic population, and directed connections. It converts these into the Rust graph
-format and uploads a JSON `file` to `POST /api/analyze?n=<n>&strategy=auto`; see [API.md](API.md)
-for the backend contract. The response has `selected`, `n`, `solver`, `baseline_weighted_hours`, and
-`optimized_weighted_hours`; the API route returns that allocation with Gemini's `analysis`.
+The route (`POST /api/solar-allocation`) accepts a positive integer `n` and a `network` with site
+coordinates, weekly hours, grid power, clinic population, and directed connections. It converts
+these into the engine's graph format (see [API.md](API.md)) and runs the built-in engine, or, when
+`MEDROUTE_API_URL` is set, uploads it as a JSON `file` to that service's
+`POST /api/analyze?n=<n>&strategy=auto`. It returns the `allocation` (`selected`, `n`, `solver`,
+`baseline_weighted_hours`, `optimized_weighted_hours`), the best sites for each smaller budget
+(`steps`), and Gemini's `analysis`.
 
 Set `GEMINI_API_KEY` in `.env.local` for local development and in the production environment.
 `GEMINI_MODEL` defaults to `gemini-3.5-flash-lite`. `MEDROUTE_API_URL` is optional (see above).
