@@ -106,10 +106,14 @@ describe("DemoApp without an API key", () => {
     expect(screen.getByRole("link", { name: "← Back to site" })).toHaveAttribute("href", "/");
   });
 
-  it("keeps the desktop page fixed while the network editor scrolls", () => {
+  it("keeps the page fixed while the network editor scrolls", () => {
     const { container } = render(<DemoApp />);
-    expect(container.querySelector(".theme-night")).toHaveClass("md:overflow-hidden");
-    expect(screen.getByLabelText("Network editor")).toHaveClass("min-h-0", "md:overflow-y-auto");
+    expect(container.querySelector(".theme-night")).toHaveClass(
+      "fixed",
+      "inset-0",
+      "overflow-hidden",
+    );
+    expect(screen.getByLabelText("Network editor")).toHaveClass("min-h-0", "overflow-y-auto");
     expect(screen.getByRole("region", { name: "Map" })).toHaveClass("md:min-h-0");
   });
 });

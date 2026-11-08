@@ -342,15 +342,15 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
   );
 
   const layout = (
-    <div className="theme-night flex min-h-dvh flex-col bg-background font-display text-foreground md:h-dvh md:overflow-hidden">
+    <div className="theme-night fixed inset-0 flex flex-col overflow-hidden bg-background font-display text-foreground">
       <DemoHeader count={locations.length} connectionCount={connections.length} />
-      <div className="flex flex-1 flex-col md:grid md:min-h-0 md:grid-cols-[minmax(22rem,26rem)_1fr] md:grid-rows-[minmax(0,1fr)] md:overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:grid md:grid-cols-[minmax(22rem,26rem)_1fr] md:grid-rows-[minmax(0,1fr)]">
         <section aria-label="Map" className="order-1 h-[55vh] md:order-2 md:h-auto md:min-h-0">
           {mapArea}
         </section>
         <aside
           aria-label="Network editor"
-          className="order-2 min-h-0 border-foreground/30 md:order-1 md:overflow-y-auto md:border-r"
+          className="order-2 min-h-0 overflow-y-auto border-foreground/30 md:order-1 md:border-r"
         >
           {panel}
         </aside>

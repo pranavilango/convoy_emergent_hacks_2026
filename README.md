@@ -51,8 +51,8 @@ counts." and the footer's "Power care." flicker on as they scroll into view. The
 as it scrolls past: it rotates (±3°) about the planet's real centre, fitted from the horizon in
 the photo, so the horizon stays put while the land and lights slide along it (CSS scroll-driven
 animation, `.earth-spin`; browsers without it show the photo still). With reduced motion turned
-on, nothing flickers or turns. The nav links glide smoothly to their sections. The logo is all
-white.
+on, nothing flickers or turns. The nav links glide smoothly to their sections. The logo mark is
+aquamarine, matching the site's accent color.
 
 - Flicker: `power-on` keyframes in `src/app/globals.css`; `lightsOn()` in `src/app/page.tsx` sets
   the hero timings, and `src/components/landing/power-on.tsx` plays it on scroll.
@@ -72,6 +72,9 @@ ports are always open. **Load Ghana sample network** fills in a ready-made corri
 **Connect**, then click the sites it supplies (click again to unlink). You can also connect from
 the panel. Everything is saved in the browser (`localStorage`, key `convoy.demo.v2`). Each visitor
 sees only their own data, and clearing site data resets it.
+
+Use **Load Ghana sample network** for a prebuilt seven-site scenario and a $24,000 budget. Loading
+the sample replaces the network and budget currently saved in that browser.
 
 The network is a directed graph, ready to hand to the allocation engine:
 
