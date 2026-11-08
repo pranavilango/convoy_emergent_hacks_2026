@@ -15,12 +15,15 @@ export type TourStop = {
   body: string;
   /** Which side of the target the tooltip prefers, or "inside" it (for the big map). */
   place: Side | "inside";
+  /** False for a target that already has its own aqua outline (the header's Tour button). */
+  outline?: false;
 };
 
 export const TOUR_STOPS: readonly TourStop[] = [
   {
     target: "tour",
     place: "below",
+    outline: false,
     title: "Welcome to Convoy",
     body: "Convoy works out which warehouses and clinics should get solar first, so medicines keep arriving through power cuts. This quick tour shows each part. Replay it any time from here.",
   },
@@ -280,7 +283,7 @@ export function GuidedTour({ onClose }: { /** Finished or skipped. */ onClose: (
 
   return (
     <>
-      {layout?.outline && (
+      {layout?.outline && stop.outline !== false && (
         <div
           aria-hidden
           data-testid="tour-outline"

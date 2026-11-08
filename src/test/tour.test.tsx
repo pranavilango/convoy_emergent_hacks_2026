@@ -36,6 +36,12 @@ describe("the demo's guided tour", () => {
     expect(document.querySelector(".fixed.inset-0")).toBeNull();
   });
 
+  it("doesn't draw a second outline around the already-outlined Tour button", () => {
+    render(<DemoApp />);
+    expect(screen.getByRole("dialog", { name: "Welcome to Convoy" })).toBeInTheDocument();
+    expect(screen.queryByTestId("tour-outline")).toBeNull();
+  });
+
   it("can be skipped, and then stays closed on later visits", () => {
     const { unmount } = render(<DemoApp />);
     click("Skip");
