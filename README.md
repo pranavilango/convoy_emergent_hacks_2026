@@ -87,7 +87,9 @@ editor column on the left that runs in the order you'd fill it in:
    coordinates are what the engine gets). Escape or **Cancel** stops placing; **Change** discards
    the dropped point.
 4. **Locations** — every site; open one to rename it or change its type, hours, grid power, or
-   population.
+   population. The red bin on each row deletes a site and its links in one click; so does
+   **Delete** on a site's map card. Either way, a "Deleted … · Undo" notice stays up for 8
+   seconds, and **Undo** puts the site and its links back exactly where they were.
 5. **Connections** — who supplies whom. Add links here, or select a port or warehouse on the map,
    press **Connect**, then click the sites it supplies (click again to unlink).
 6. **Analysis** — what's still missing, then **Analyze**.
@@ -142,7 +144,8 @@ The network is a directed graph, ready to hand to the allocation engine:
   ranges per day (`mon`–`sun`), in minutes since midnight. An empty list means closed,
   `close < open` runs past midnight, and `close: 1440` means "until midnight". Ports are always
   24/7. `gridPower` is `{ from, until }` in whole hours (0–24, the same every day), or null for a
-  reliable grid (and always for ports). Clinics have `population`, the number of people they serve
+  reliable grid (and always for ports); the same start and end hour (e.g. `{ from: 8, until: 8 }`)
+  means no grid power at all, which the **No grid power at all** checkbox sets. Clinics have `population`, the number of people they serve
   (a whole number from 1 to 100,000,000); it's null for other kinds, and for a clinic until it's
   set.
 - **Connections** are the edges, stored as `{ id, fromId, toId }`. Supplies flow one way, so the

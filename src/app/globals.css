@@ -273,6 +273,8 @@
   .theme-night {
     --background: var(--night);
     --foreground: oklch(1 0 0);
+    /* The lighter red from the dark palette, readable on black (delete buttons). */
+    --destructive: oklch(0.704 0.191 22.216);
   }
 
   /* Landing page Earth: turns ±3° about the planet's real centre as its section scrolls past. The

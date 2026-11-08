@@ -19,7 +19,10 @@ import {
 /** A daily span in whole hours, `from` inclusive to `until` exclusive: 0 ≤ from < until ≤ 24. */
 export type HourWindow = { from: number; until: number };
 
-/** The hours a site has grid power each day, the same every day. Null means a reliable grid. */
+/**
+ * The hours a site has grid power each day, the same every day. Null means a reliable grid. A
+ * window that starts and ends at the same hour (`from === until`) means no grid power at all.
+ */
 export type GridPower = HourWindow | null;
 
 /** Eight hours a day: what a site on a rationed grid often gets. Used when limiting power. */
@@ -37,6 +40,25 @@ export function isHourWindow(value: unknown): value is HourWindow {
   );
 }
 
+/** Valid grid power hours: a daily window, or the same start and end hour for no power at all. */
+export function isGridPower(value: unknown): value is HourWindow {
+  if (typeof value !== "object" || value === null) return false;
+  const { from, until } = value as Record<string, unknown>;
+  return (
+    Number.isInteger(from) &&
+    Number.isInteger(until) &&
+    (from as number) >= 0 &&
+    (from as number) < 24 &&
+    (from as number) <= (until as number) &&
+    (until as number) <= 24
+  );
+}
+
+/** Whether a site gets no grid power at all (its power hours start and end at the same time). */
+export function hasNoGridPower(power: GridPower): boolean {
+  return power !== null && power.from === power.until;
+}
+
 export const windowHours = (window: HourWindow) => window.until - window.from;
 
 /** "06:00–14:00", or "24 hours" for the whole day. */
@@ -45,9 +67,10 @@ export function formatWindow(window: HourWindow): string {
   return `${formatTime(window.from * 60)}–${formatTime(window.until * 60)}`;
 }
 
-/** "All day", or "06:00–14:00 (8 h a day)". */
+/** "All day", "None", or "06:00–14:00 (8 h a day)". */
 export function formatPower(power: GridPower): string {
   if (power === null || windowHours(power) === 24) return "All day";
+  if (hasNoGridPower(power)) return "None";
   return `${formatWindow(power)} (${windowHours(power)} h a day)`;
 }
 

@@ -17,7 +17,7 @@ import {
 } from "@/lib/demo/kinds";
 import { formatPeopleHours, totalClinicPopulation } from "@/lib/demo/population";
 import { cannotReceiveToday } from "@/lib/demo/power";
-import { demoActions, useDemoState } from "@/lib/demo/store";
+import { demoActions, useDemoState, type Removed } from "@/lib/demo/store";
 import { closeTour, openTour, useTourOpen } from "@/lib/demo/tour";
 import type { Location } from "@/lib/demo/types";
 import { analysisIssues } from "@/lib/solar-allocation/readiness";
@@ -104,6 +104,23 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
   const placing = problem ? null : rawPlacing;
   const [dropped, setDropped] = useState<DroppedSite | null>(null);
   const [pendingPin, setPendingPin] = useState<DroppedSite | null>(null);
+
+  // The last deletion, offered for undo for a few seconds.
+  const [undo, setUndo] = useState<(Removed & { nonce: number }) | null>(null);
+  useEffect(() => {
+    if (!undo) return;
+    const timer = setTimeout(() => setUndo(null), UNDO_MS);
+    return () => clearTimeout(timer);
+  }, [undo]);
+
+  /** Delete a location and its links, from its row or its map card; it can be undone. */
+  function deleteLocation(id: string) {
+    const removed = demoActions.removeLocation(id);
+    if (!removed) return;
+    if (rawSelection?.kind === "location" && rawSelection.id === id) setSelection(null);
+    if (rawConnectingFrom === id) setConnectingFrom(null);
+    setUndo({ ...removed, nonce: Date.now() });
+  }
 
   function placeOnMap(kind: LocationKind, lat: number, lng: number) {
     const count = locations.filter((l) => l.kind === kind).length;
@@ -294,6 +311,7 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
           connections={connections}
           selectedId={selection?.kind === "location" ? selection.id : null}
           onSelect={selectLocationFromPanel}
+          onDelete={deleteLocation}
           {...(problem ? {} : { onStartConnecting: startConnecting })}
         />
       </div>
@@ -390,6 +408,7 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
           placing={placing}
           pendingPin={pendingPin}
           onPlace={placeOnMap}
+          onDeleteLocation={deleteLocation}
         />
       )}
       {!problem && (
@@ -409,6 +428,16 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
           locations={locations}
           count={outgoing(connections, connectingLocation.id).length}
           onDone={stopConnecting}
+        />
+      )}
+      {undo && (
+        <UndoToast
+          key={undo.nonce}
+          removed={undo}
+          onUndo={() => {
+            demoActions.restoreLocation(undo);
+            setUndo(null);
+          }}
         />
       )}
     </div>
@@ -525,6 +554,35 @@ function SampleButton({ onClick }: { onClick: () => void }) {
     >
       Load Ghana sample network
     </button>
+  );
+}
+
+/** How long "Deleted … · Undo" stays up. */
+const UNDO_MS = 8000;
+
+/**
+ * After a deletion: what went, and a way to put it back. Over the bottom of the map on desktop,
+ * pinned above the sample button on phones (so it shows wherever the page is scrolled).
+ */
+function UndoToast({ removed, onUndo }: { removed: Removed; onUndo: () => void }) {
+  const links = removed.connections.length;
+  return (
+    <div
+      role="status"
+      className="fixed inset-x-4 bottom-20 z-30 flex items-center justify-between gap-4 rounded-sm border border-white/15 bg-ink px-4 py-2.5 text-sm text-ink-foreground shadow-lg md:absolute md:inset-x-auto md:bottom-9 md:left-1/2 md:-translate-x-1/2 md:motion-safe:animate-in md:motion-safe:fade-in-0"
+    >
+      <span className="min-w-0 truncate">
+        Deleted <strong className="font-semibold">{removed.location.name}</strong>
+        {links > 0 && ` and ${links} ${links === 1 ? "link" : "links"}`}
+      </span>
+      <button
+        type="button"
+        onClick={onUndo}
+        className="shrink-0 font-mono text-[11px] uppercase tracking-wider text-aqua underline-offset-4 outline-none hover:underline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-aqua"
+      >
+        Undo
+      </button>
+    </div>
   );
 }
 

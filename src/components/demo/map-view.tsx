@@ -1,6 +1,7 @@
 "use client";
 
 import { AdvancedMarker, ColorScheme, Map, Polyline, useMap } from "@vis.gl/react-google-maps";
+import { Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 
 import {
@@ -69,6 +70,7 @@ export function MapView({
   placing,
   pendingPin,
   onPlace,
+  onDeleteLocation,
 }: {
   mapId: string;
   locations: Location[];
@@ -90,6 +92,8 @@ export function MapView({
   pendingPin: PendingPin | null;
   /** A kind dropped (or click-placed) at an exact point on the map. */
   onPlace: (kind: LocationKind, lat: number, lng: number) => void;
+  /** Delete a location (from its card) and its connections. */
+  onDeleteLocation: (locationId: string) => void;
 }) {
   const locationById = new globalThis.Map(locations.map((l) => [l.id, l]));
   const degreeById = degrees(connections);
@@ -223,9 +227,15 @@ export function MapView({
 
         {selectedLocation && (
           <MapCard position={selectedLocation} gap={(size + ACTIVE_GROWTH_PX) / 2 + 4}>
-            <CardLabel color={KIND_INFO[selectedLocation.kind].color}>
-              {kindLabel(selectedLocation)}
-            </CardLabel>
+            <div className="flex items-start justify-between gap-2">
+              <CardLabel color={KIND_INFO[selectedLocation.kind].color}>
+                {kindLabel(selectedLocation)}
+              </CardLabel>
+              <CardDeleteButton
+                name={selectedLocation.name}
+                onClick={() => onDeleteLocation(selectedLocation.id)}
+              />
+            </div>
             <p className="mt-1.5 text-base leading-tight tracking-tight">{selectedLocation.name}</p>
             <p className="mt-1 text-xs leading-snug opacity-60">{selectedLocation.address}</p>
             {poweredIds?.has(selectedLocation.id) && (
@@ -657,6 +667,25 @@ function CardLabel({ color, children }: { color?: string; children: ReactNode })
       )}
       {children}
     </div>
+  );
+}
+
+/** Red bin + "Delete" in a location card's top corner. */
+function CardDeleteButton({ name, onClick }: { name: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label={`Delete ${name}`}
+      title={`Delete ${name}`}
+      onClick={(e: MouseEvent) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className="-mr-1 -mt-1 inline-flex shrink-0 items-center gap-1 rounded-sm px-1.5 py-1 font-mono text-[10px] uppercase tracking-wider text-destructive transition-colors outline-none hover:bg-destructive/15 focus-visible:outline-1 focus-visible:outline-destructive"
+    >
+      <Trash2 aria-hidden className="size-3.5" strokeWidth={1.75} />
+      Delete
+    </button>
   );
 }
 

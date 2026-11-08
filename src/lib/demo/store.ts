@@ -6,7 +6,7 @@ import type { WeeklyHours } from "./hours";
 import type { LocationKind, PortMode } from "./kinds";
 import type { GridPower } from "./power";
 import { INITIAL_STATE, parseState, reducer, type DemoAction } from "./reducer";
-import type { DemoState, NewLocation } from "./types";
+import type { Connection, DemoState, Location, NewLocation } from "./types";
 
 /**
  * Demo state lives in the browser (localStorage) for now. Everything that reads or writes it
@@ -95,6 +95,13 @@ function newId(): string {
   return crypto.randomUUID();
 }
 
+/** A removed location, where it was, and its connections with where they were. */
+export type Removed = {
+  location: Location;
+  index: number;
+  connections: { connection: Connection; index: number }[];
+};
+
 export const demoActions = {
   replaceState(next: DemoState) {
     dispatch({ type: "replace", state: next });
@@ -124,8 +131,24 @@ export const demoActions = {
   setGridPower(id: string, gridPower: GridPower) {
     dispatch({ type: "updateLocation", id, gridPower });
   },
-  removeLocation(id: string) {
+  /**
+   * Remove a location and its connections. Returns what's needed to put them back exactly as
+   * they were (see `restoreLocation`), or null if there was no such location.
+   */
+  removeLocation(id: string): Removed | null {
+    const current = getSnapshot();
+    const index = current.locations.findIndex((l) => l.id === id);
+    const location = current.locations[index];
+    if (!location) return null;
+    const connections = current.connections
+      .map((connection, at) => ({ connection, index: at }))
+      .filter(({ connection }) => connection.fromId === id || connection.toId === id);
     dispatch({ type: "removeLocation", id });
+    return { location, index, connections };
+  },
+  /** Undo `removeLocation`. */
+  restoreLocation(removed: Removed) {
+    dispatch({ type: "restoreLocation", ...removed });
   },
   /** Add a supply link fromId → toId (port → warehouse or warehouse → clinic). No-op if it
    *  already exists or breaks the chain. */

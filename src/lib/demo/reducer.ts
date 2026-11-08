@@ -4,7 +4,7 @@ import { ALWAYS_OPEN, cloneHours, DEFAULT_HOURS, hoursError, parseHours } from "
 import type { WeeklyHours } from "./hours";
 import { canSupply, isLocationKind, isPortMode, type LocationKind, type PortMode } from "./kinds";
 import { isPopulation } from "./population";
-import { isHourWindow, type GridPower } from "./power";
+import { isGridPower, type GridPower } from "./power";
 import type { Connection, DemoState, Location, NewLocation } from "./types";
 
 export const INITIAL_STATE: DemoState = { locations: [], connections: [], budget: EMPTY_BUDGET };
@@ -31,6 +31,14 @@ export type DemoAction =
       population?: number;
     }
   | { type: "removeLocation"; id: string }
+  /** Undo a removal: put the location back at `index` and its connections back where they were
+   *  (each at its old position), as long as nothing has taken their place since. */
+  | {
+      type: "restoreLocation";
+      location: Location;
+      index: number;
+      connections: { connection: Connection; index: number }[];
+    }
   /** Only port → warehouse and warehouse → clinic. Duplicates are ignored. */
   | { type: "addConnection"; id: string; fromId: string; toId: string }
   | { type: "removeConnection"; id: string }
@@ -77,8 +85,7 @@ export function reducer(state: DemoState, action: DemoAction): DemoState {
       const isPort = location.kind === "port";
       if (isPort && !isPortMode(location.portMode)) return state;
       if (!isPort && hoursError(location.hours)) return state;
-      if (location.gridPower !== null && (isPort || !isHourWindow(location.gridPower)))
-        return state;
+      if (location.gridPower !== null && (isPort || !isGridPower(location.gridPower))) return state;
       const isClinic = location.kind === "clinic";
       if (isClinic && !isPopulation(location.population)) return state;
       const added: Location = {
@@ -110,7 +117,7 @@ export function reducer(state: DemoState, action: DemoAction): DemoState {
       }
       if (action.portMode !== undefined && !isPortMode(action.portMode)) return state;
       if (action.hours !== undefined && hoursError(action.hours)) return state;
-      if (action.gridPower != null && !isHourWindow(action.gridPower)) return state;
+      if (action.gridPower != null && !isGridPower(action.gridPower)) return state;
 
       if (next.kind === "port") {
         if (action.hours !== undefined || action.gridPower !== undefined) return state;
@@ -152,6 +159,33 @@ export function reducer(state: DemoState, action: DemoAction): DemoState {
         locations: state.locations.filter((l) => l.id !== action.id),
         connections: state.connections.filter((c) => !involves(c, action.id)),
       };
+    }
+
+    case "restoreLocation": {
+      const { location } = action;
+      if (!isLocationKind(location.kind) || state.locations.some((l) => l.id === location.id)) {
+        return state;
+      }
+      const locations = [...state.locations];
+      locations.splice(Math.max(0, Math.min(action.index, locations.length)), 0, location);
+      const ids = new Set(locations.map((l) => l.id));
+      const connections = [...state.connections];
+      for (const { connection, index } of [...action.connections].sort(
+        (a, b) => a.index - b.index,
+      )) {
+        if (!ids.has(connection.fromId) || !ids.has(connection.toId)) continue;
+        if (
+          connections.some(
+            (c) =>
+              c.id === connection.id ||
+              (c.fromId === connection.fromId && c.toId === connection.toId),
+          )
+        ) {
+          continue;
+        }
+        connections.splice(Math.max(0, Math.min(index, connections.length)), 0, connection);
+      }
+      return { ...state, locations, connections };
     }
 
     case "addConnection": {
@@ -219,7 +253,7 @@ function parseLocation(value: unknown): Location | null {
     portMode: mode,
     hours,
     // Sites saved before grid power existed load with a reliable grid.
-    gridPower: !isPort && isHourWindow(value["gridPower"]) ? { ...value["gridPower"] } : null,
+    gridPower: !isPort && isGridPower(value["gridPower"]) ? { ...value["gridPower"] } : null,
     // Clinics saved before population existed load as "not set yet".
     population: kind === "clinic" && isPopulation(population) ? population : null,
     createdAt,

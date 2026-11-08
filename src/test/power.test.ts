@@ -5,6 +5,8 @@ import { ALWAYS_OPEN, cloneHours, DEFAULT_HOURS } from "@/lib/demo/hours";
 import {
   cannotReceiveToday,
   formatPower,
+  hasNoGridPower,
+  isGridPower,
   isHourWindow,
   receivingWindows,
   staffedWindow,
@@ -81,6 +83,82 @@ const links: Connection[] = [
   { id: "pw", fromId: "p", toId: "w" },
   { id: "wc", fromId: "w", toId: "c" },
 ];
+
+describe("no grid power at all", () => {
+  it("is grid power hours that start and end at the same time", () => {
+    for (const none of [
+      { from: 0, until: 0 },
+      { from: 9, until: 9 },
+      { from: 23, until: 23 },
+    ]) {
+      expect(isGridPower(none)).toBe(true);
+      expect(hasNoGridPower(none)).toBe(true);
+      expect(formatPower(none)).toBe("None");
+    }
+    expect(hasNoGridPower(null)).toBe(false);
+    expect(hasNoGridPower({ from: 8, until: 16 })).toBe(false);
+    for (const bad of [
+      { from: 9, until: 8 },
+      { from: 24, until: 24 },
+      { from: -1, until: -1 },
+    ]) {
+      expect(isGridPower(bad)).toBe(false);
+    }
+  });
+
+  it("means the site can't take in medicines today, but solar opens it for its staffed hours", () => {
+    expect(receivingWindows(weekdays(), { from: 12, until: 12 })).toEqual({
+      staffed: { from: 9, until: 17 },
+      today: null,
+      withSolar: { from: 9, until: 17 },
+    });
+    expect(cannotReceiveToday(site("c", "clinic", { gridPower: { from: 12, until: 12 } }))).toBe(
+      true,
+    );
+  });
+
+  it("is saved, loaded back, and run through the optimizer like any site", async () => {
+    let s = reducer(INITIAL_STATE, {
+      type: "addLocation",
+      id: "c",
+      createdAt: "t",
+      location: {
+        name: "Site",
+        address: "a",
+        lat: 0,
+        lng: 0,
+        kind: "clinic",
+        portMode: null,
+        hours: weekdays(),
+        gridPower: { from: 8, until: 8 },
+        population: 10,
+      },
+    });
+    expect(s.locations[0]?.gridPower).toEqual({ from: 8, until: 8 });
+    expect(parseState(JSON.parse(JSON.stringify(s)))?.locations[0]?.gridPower).toEqual({
+      from: 8,
+      until: 8,
+    });
+    s = reducer(s, { type: "updateLocation", id: "c", gridPower: { from: 0, until: 0 } });
+    expect(s.locations[0]?.gridPower).toEqual({ from: 0, until: 0 });
+
+    // A big clinic with no power at all gets the one solar unit.
+    const locations = [
+      site("p", "port", { lng: 0 }),
+      site("w", "warehouse", { lng: 0.2, gridPower: { from: 6, until: 18 } }),
+      site("dark", "clinic", { lng: 0.4, population: 500_000, gridPower: { from: 0, until: 0 } }),
+      site("lit", "clinic", { lng: 0.6, population: 40_000, gridPower: { from: 12, until: 14 } }),
+    ];
+    const connections: Connection[] = [
+      { id: "pw", fromId: "p", toId: "w" },
+      { id: "wd", fromId: "w", toId: "dark" },
+      { id: "wl", fromId: "w", toId: "lit" },
+    ];
+    expect(analysisIssues(locations, connections, 1)).toEqual([]);
+    const allocation = await generateSolarAllocation({ locations, connections }, 1);
+    expect(allocation.selected).toEqual(["dark"]);
+  });
+});
 
 describe("which sites the map draws in black and white", () => {
   it("is warehouses and clinics that never have power while they're staffed", () => {
@@ -189,7 +267,7 @@ describe("grid power in the store", () => {
 
   it("rejects bad windows and power hours on ports; a site that becomes a port loses them", () => {
     const s = add(INITIAL_STATE, "w", newSite("warehouse", { from: 6, until: 14 }));
-    expect(reducer(s, { type: "updateLocation", id: "w", gridPower: { from: 9, until: 9 } })).toBe(
+    expect(reducer(s, { type: "updateLocation", id: "w", gridPower: { from: 9, until: 8 } })).toBe(
       s,
     );
     expect(add(INITIAL_STATE, "p", newSite("port", { from: 6, until: 14 }))).toBe(INITIAL_STATE);

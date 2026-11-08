@@ -1,9 +1,10 @@
 "use client";
 
+import { Trash2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { distanceKm, formatDistance } from "@/lib/demo/geometry";
-import { connectionsOf, degrees, findConnection, incoming, outgoing } from "@/lib/demo/graph";
+import { connectionsOf, findConnection, incoming, outgoing } from "@/lib/demo/graph";
 import { cloneHours, hoursError, summarizeHours, type WeeklyHours } from "@/lib/demo/hours";
 import {
   KIND_INFO,
@@ -41,6 +42,7 @@ export function LocationList({
   connections,
   selectedId,
   onSelect,
+  onDelete,
   onStartConnecting,
 }: {
   locations: Location[];
@@ -48,10 +50,11 @@ export function LocationList({
   selectedId: string | null;
   /** Select a location and move the map to it (null clears the selection). */
   onSelect: (id: string | null) => void;
+  /** Delete a location and its connections (the page offers to undo it). */
+  onDelete: (id: string) => void;
   /** Enter "click squares on the map to connect" mode. Omitted when the map isn't available. */
   onStartConnecting?: (id: string) => void;
 }) {
-  const degreeById = degrees(connections);
   // Newest first: the one you just added is the one you're most likely to look at.
   const ordered = [...locations].reverse();
 
@@ -72,41 +75,38 @@ export function LocationList({
         <ul className="divide-y divide-foreground/30 border-y border-foreground/30">
           {ordered.map((location) => {
             const selected = location.id === selectedId;
-            const degree = degreeById.get(location.id) ?? 0;
             return (
               <li key={location.id}>
-                <button
-                  type="button"
-                  aria-expanded={selected}
-                  onClick={() => onSelect(selected ? null : location.id)}
-                  className={cn(
-                    "grid w-full grid-cols-[auto_1fr_auto] items-baseline gap-x-3 py-3 text-left",
-                    focusRing,
-                  )}
-                >
-                  <Swatch color={KIND_INFO[location.kind].color} className="translate-y-[1px]" />
-                  <span className="min-w-0">
-                    <span className="block truncate text-lg leading-tight tracking-tight">
-                      {location.name}
-                    </span>
-                    <span className="block truncate text-xs opacity-70">{location.address}</span>
-                  </span>
-                  <span className="text-right font-mono text-[11px] uppercase tracking-wider opacity-70">
-                    {kindLabel(location)}
-                    {degree > 0 && (
-                      <span className="block normal-case" aria-label={plural(degree, "connection")}>
-                        —{degree}
-                      </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    aria-expanded={selected}
+                    onClick={() => onSelect(selected ? null : location.id)}
+                    className={cn(
+                      "grid min-w-0 flex-1 grid-cols-[auto_1fr] items-baseline gap-x-3 py-3 text-left",
+                      focusRing,
                     )}
-                  </span>
-                </button>
+                  >
+                    <Swatch color={KIND_INFO[location.kind].color} className="translate-y-[1px]" />
+                    <span className="min-w-0">
+                      <span className="block truncate text-lg leading-tight tracking-tight">
+                        {location.name}
+                      </span>
+                      <span className="block truncate text-xs opacity-70">{location.address}</span>
+                      {/* The square's colour shows the type (see the map legend); this says it
+                          to screen readers, which can't see the colour. */}
+                      <span className="sr-only">, {kindLabel(location)}</span>
+                    </span>
+                  </button>
+                  <DeleteButton name={location.name} onClick={() => onDelete(location.id)} />
+                </div>
                 {selected && (
                   <LocationEditor
                     key={location.id}
                     location={location}
                     locations={locations}
                     connections={connections}
-                    onRemoved={() => onSelect(null)}
+                    onDelete={() => onDelete(location.id)}
                     {...(onStartConnecting ? { onStartConnecting } : {})}
                   />
                 )}
@@ -119,17 +119,32 @@ export function LocationList({
   );
 }
 
+/** A small red bin that deletes a location (and its links), straight from its row. */
+function DeleteButton({ name, onClick }: { name: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label={`Delete ${name}`}
+      title={`Delete ${name}`}
+      onClick={onClick}
+      className="grid size-8 shrink-0 place-items-center rounded-sm text-destructive/80 transition-colors hover:bg-destructive/10 hover:text-destructive outline-none focus-visible:outline-1 focus-visible:outline-destructive"
+    >
+      <Trash2 aria-hidden className="size-4" strokeWidth={1.75} />
+    </button>
+  );
+}
+
 function LocationEditor({
   location,
   locations,
   connections,
-  onRemoved,
+  onDelete,
   onStartConnecting,
 }: {
   location: Location;
   locations: Location[];
   connections: Connection[];
-  onRemoved: () => void;
+  onDelete: () => void;
   onStartConnecting?: (id: string) => void;
 }) {
   const own = connectionsOf(connections, location.id);
@@ -192,15 +207,13 @@ function LocationEditor({
       />
       <Button
         variant="ghost"
-        className="font-mono text-[11px] uppercase tracking-wider"
-        onClick={() => {
-          demoActions.removeLocation(location.id);
-          onRemoved();
-        }}
+        className="font-mono text-[11px] uppercase tracking-wider text-destructive hover:text-destructive"
+        onClick={onDelete}
       >
+        <Trash2 aria-hidden className="size-3.5" strokeWidth={1.75} />
         {own.length > 0
-          ? `Remove location + ${plural(own.length, "connection")}`
-          : "Remove location"}
+          ? `Delete location + ${plural(own.length, "connection")}`
+          : "Delete location"}
       </Button>
     </div>
   );

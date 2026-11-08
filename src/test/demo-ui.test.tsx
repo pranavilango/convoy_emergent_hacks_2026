@@ -6,10 +6,12 @@ import { AddLocationForm } from "@/components/demo/add-location-form";
 import { AnalysisText } from "@/components/demo/analysis-text";
 import { DemoApp } from "@/components/demo/demo-app";
 import { Select } from "@/components/demo/select";
+import { GridPowerField } from "@/components/demo/grid-power-field";
 import { HoursEditor } from "@/components/demo/hours-editor";
 import { DRAG_KIND_TYPE, LocationKinds } from "@/components/demo/location-kinds";
 import { cloneHours, DEFAULT_HOURS, type WeeklyHours } from "@/lib/demo/hours";
 import type { LocationKind } from "@/lib/demo/kinds";
+import type { GridPower } from "@/lib/demo/power";
 import { __resetDemoStore, demoActions, STORAGE_KEY, useDemoState } from "@/lib/demo/store";
 import { __resetTour, TOUR_STORAGE_KEY } from "@/lib/demo/tour";
 
@@ -350,8 +352,8 @@ describe("location list", () => {
     expect(screen.getByRole("combobox", { name: "Type" })).toHaveTextContent("Warehouse");
     expect(screen.getByRole("button", { name: /^Mwanza Clinic/ })).toHaveTextContent("Warehouse");
 
-    fireEvent.click(screen.getByRole("button", { name: "Remove location" }));
-    expect(screen.queryByText("Mwanza Clinic")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Delete location" }));
+    expect(screen.queryByRole("button", { name: /^Mwanza Clinic/ })).toBeNull();
   });
 
   it("shows ports as always open and switches them between sea and air", () => {
@@ -367,6 +369,20 @@ describe("location list", () => {
     fireEvent.click(screen.getByRole("button", { name: "Air" }));
     expect(screen.getByRole("button", { name: "Air" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: /^Dar Port/ })).toHaveTextContent("Port · Air");
+  });
+
+  it("shows a site's type by its colour only, saying it just to screen readers", () => {
+    act(() => {
+      addChain();
+    });
+    render(<DemoApp />);
+    const list = screen.getByRole("region", { name: /Locations/ });
+    const row = within(list).getByRole("button", { name: /^Mwanza Clinic/ });
+    expect(row).toHaveAccessibleName(/Mwanza Clinic.*Clinic$/);
+    expect(within(row).getByText(", Clinic")).toHaveClass("sr-only");
+    for (const label of within(list).queryAllByText(/^(Clinic|Warehouse|Port · Sea)$/)) {
+      expect(label.closest(".sr-only")).not.toBeNull();
+    }
   });
 
   it("asks before a type change that would remove connections", () => {
@@ -528,7 +544,7 @@ describe("connections", () => {
       screen.getByRole("button", { name: "Remove supply to Mwanza Clinic" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Remove location \+ 2 connections/ }),
+      screen.getByRole("button", { name: /Delete location \+ 2 connections/ }),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Remove supply to Mwanza Clinic" }));
@@ -554,8 +570,61 @@ describe("connections", () => {
     });
     render(<DemoApp />);
     openLocation("Central Store");
-    fireEvent.click(screen.getByRole("button", { name: /Remove location/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Delete location/ }));
     expect(screen.queryByRole("button", { name: /Remove connection from/ })).toBeNull();
+  });
+
+  it("has a delete bin on every row, and no unexplained link count", () => {
+    act(() => {
+      addChain();
+    });
+    render(<DemoApp />);
+    const list = screen.getByRole("region", { name: /Locations/ });
+    for (const name of ["Dar Port", "Central Store", "Mwanza Clinic"]) {
+      expect(within(list).getByRole("button", { name: `Delete ${name}` })).toBeInTheDocument();
+    }
+    // The old "—1" (number of links) is gone from the rows.
+    expect(list.textContent).not.toMatch(/—\d/);
+
+    // One click deletes the site and its links, without opening it first.
+    fireEvent.click(within(list).getByRole("button", { name: "Delete Central Store" }));
+    expect(within(list).queryByRole("button", { name: /^Central Store/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Remove connection from/ })).toBeNull();
+  });
+
+  it("offers to undo a deletion, which puts the site and its links back exactly", () => {
+    act(() => {
+      addChain();
+    });
+    const before = window.localStorage.getItem(STORAGE_KEY);
+    render(<DemoApp />);
+    fireEvent.click(screen.getByRole("button", { name: "Delete Central Store" }));
+    const toast = screen.getByText(/^Deleted/).closest<HTMLElement>('[role="status"]')!;
+    expect(toast).toHaveTextContent("Deleted Central Store and 2 links");
+    fireEvent.click(within(toast).getByRole("button", { name: "Undo" }));
+    const list = screen.getByRole("region", { name: /Locations/ });
+    expect(within(list).getByRole("button", { name: /^Central Store/ })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /^Remove connection from/ })).toHaveLength(2);
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe(before);
+    expect(screen.queryByText(/Deleted Central Store/)).toBeNull();
+  });
+
+  it("lets the undo offer lapse after a few seconds", () => {
+    vi.useFakeTimers();
+    try {
+      act(() => {
+        addLocation("clinic", "Mwanza Clinic");
+      });
+      render(<DemoApp />);
+      fireEvent.click(screen.getByRole("button", { name: "Delete Mwanza Clinic" }));
+      expect(screen.getByText(/Deleted/)).toHaveTextContent("Deleted Mwanza Clinic");
+      act(() => {
+        vi.advanceTimersByTime(8000);
+      });
+      expect(screen.queryByText(/Deleted/)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -771,5 +840,48 @@ describe("adding a site from the map", () => {
     expect(site.placeId).toBeUndefined();
     expect(onAdded).toHaveBeenCalledWith(site.id);
     expect(onDropCleared).toHaveBeenCalled();
+  });
+});
+
+describe("grid power: no power at all", () => {
+  function Field({ initial }: { initial: GridPower }) {
+    const [value, setValue] = useState<GridPower>(initial);
+    return (
+      <>
+        <GridPowerField value={value} hours={cloneHours(DEFAULT_HOURS)} onChange={setValue} />
+        <output data-testid="power">{JSON.stringify(value)}</output>
+      </>
+    );
+  }
+  const power = () => JSON.parse(screen.getByTestId("power").textContent ?? "null");
+  const box = () => screen.getByRole("checkbox", { name: "No grid power at all" });
+
+  it("ticks to give the site no power, and unticks back to its last hours", () => {
+    render(<Field initial={{ from: 6, until: 14 }} />);
+    expect(box()).not.toBeChecked();
+    fireEvent.click(box());
+    expect(power()).toEqual({ from: 6, until: 6 });
+    expect(box()).toBeChecked();
+    expect(
+      screen.getByText(/No grid power at all, so it can't take in medicines today/),
+    ).toBeInTheDocument();
+    fireEvent.click(box());
+    expect(power()).toEqual({ from: 6, until: 14 });
+  });
+
+  it("ticks itself when the power goes off at the time it comes on", () => {
+    render(<Field initial={{ from: 6, until: 14 }} />);
+    pick("Power goes off", "06:00");
+    expect(power()).toEqual({ from: 6, until: 6 });
+    expect(box()).toBeChecked();
+    pick("Power goes off", "10:00");
+    expect(box()).not.toBeChecked();
+  });
+
+  it("can be ticked from a reliable grid", () => {
+    render(<Field initial={null} />);
+    fireEvent.click(box());
+    expect(power()).toEqual({ from: 8, until: 8 });
+    expect(box()).toBeChecked();
   });
 });

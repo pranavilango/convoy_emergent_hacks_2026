@@ -17,7 +17,7 @@ import {
 } from "@/lib/solar-allocation/guard";
 import { DAYS } from "@/lib/demo/hours";
 import { isLocationKind } from "@/lib/demo/kinds";
-import { isHourWindow } from "@/lib/demo/power";
+import { isGridPower } from "@/lib/demo/power";
 
 const MAX_REQUEST_SIZE = 1_000_000;
 
@@ -158,7 +158,7 @@ function isSolarAllocationNetwork(value: unknown): value is SolarAllocationNetwo
         (isFiniteNumber(location["population"]) && location["population"] >= 0)) &&
       (location["gridPower"] === undefined ||
         location["gridPower"] === null ||
-        isHourWindow(location["gridPower"])) &&
+        isGridPower(location["gridPower"])) &&
       isWeeklyHours(location["hours"]),
   );
   const connectionsValid = value["connections"].every(
