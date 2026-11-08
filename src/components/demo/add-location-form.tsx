@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import {
   ALWAYS_OPEN,
@@ -9,6 +9,7 @@ import {
   hoursError,
   type WeeklyHours,
 } from "@/lib/demo/hours";
+import { formatCoordinates } from "@/lib/demo/geometry";
 import type { LocationKind, PortMode } from "@/lib/demo/kinds";
 import { parsePopulation, populationError } from "@/lib/demo/population";
 import { DEFAULT_LIMITED_POWER, type GridPower } from "@/lib/demo/power";
@@ -23,13 +24,28 @@ import { PopulationInput } from "./population-input";
 import { PlaceSearch, type PickedPlace } from "./place-search";
 import { Select } from "./select";
 
+/** A site dropped on the map: its exact point, kind, and a starting name. `nonce` marks each drop. */
+export type DroppedSite = {
+  kind: LocationKind;
+  lat: number;
+  lng: number;
+  name: string;
+  nonce: number;
+};
+
 export function AddLocationForm({
   searchAvailable,
+  dropped = null,
   onAdded,
+  onDropCleared,
 }: {
   /** False when Google Maps isn't configured or failed to load. */
   searchAvailable: boolean;
+  /** The latest site dropped on the map: the form opens with its point and kind filled in. */
+  dropped?: DroppedSite | null;
   onAdded: (id: string) => void;
+  /** The dropped site was added or discarded, so its pending square can go. */
+  onDropCleared?: () => void;
 }) {
   const [picked, setPicked] = useState<PickedPlace | null>(null);
   const [name, setName] = useState("");
@@ -43,6 +59,30 @@ export function AddLocationForm({
   // Population is per clinic, so it's cleared after each addition.
   const [populationText, setPopulationText] = useState("");
   const [showPopulationError, setShowPopulationError] = useState(false);
+  // A new drop on the map fills in the form: its exact point as the address, and its kind.
+  const [seenDrop, setSeenDrop] = useState<number | null>(null);
+  if (dropped && dropped.nonce !== seenDrop) {
+    setSeenDrop(dropped.nonce);
+    setPicked({
+      name: dropped.name,
+      address: formatCoordinates(dropped.lat, dropped.lng),
+      placeId: "",
+      lat: dropped.lat,
+      lng: dropped.lng,
+    });
+    setName(dropped.name);
+    setKind(dropped.kind);
+    setPopulationText("");
+    setShowPopulationError(false);
+  }
+  const sectionRef = useRef<HTMLElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (seenDrop === null) return;
+    sectionRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+    nameRef.current?.focus({ preventScroll: true });
+    nameRef.current?.select();
+  }, [seenDrop]);
   const isPort = kind === "port";
   const isClinic = kind === "clinic";
   const hoursProblem = isPort ? null : hoursError(hours);
@@ -54,6 +94,7 @@ export function AddLocationForm({
   }
 
   function reset() {
+    if (picked && !picked.placeId) onDropCleared?.();
     setPicked(null);
     setName("");
     setPopulationText("");
@@ -70,7 +111,7 @@ export function AddLocationForm({
     const id = demoActions.addLocation({
       name: name.trim() || picked.name,
       address: picked.address,
-      placeId: picked.placeId,
+      ...(picked.placeId ? { placeId: picked.placeId } : {}),
       lat: picked.lat,
       lng: picked.lng,
       kind,
@@ -84,7 +125,7 @@ export function AddLocationForm({
   }
 
   return (
-    <section aria-labelledby="add-heading" className="space-y-5">
+    <section ref={sectionRef} aria-labelledby="add-heading" className="space-y-5">
       <h2 id="add-heading">
         <SectionLabel index="02">Add a location</SectionLabel>
       </h2>
@@ -101,7 +142,7 @@ export function AddLocationForm({
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="font-mono text-[11px] uppercase tracking-wider opacity-70">
-                  Selected address
+                  {picked.placeId ? "Selected address" : "Dropped on the map"}
                 </div>
                 <p className="mt-1 text-sm leading-snug">{picked.address}</p>
               </div>
@@ -118,6 +159,7 @@ export function AddLocationForm({
           <div>
             <FieldLabel htmlFor="location-name">Name</FieldLabel>
             <TextInput
+              ref={nameRef}
               id="location-name"
               value={name}
               maxLength={MAX_LOCATION_NAME_LENGTH}

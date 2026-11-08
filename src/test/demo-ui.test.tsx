@@ -2,10 +2,12 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { AddLocationForm } from "@/components/demo/add-location-form";
 import { AnalysisText } from "@/components/demo/analysis-text";
 import { DemoApp } from "@/components/demo/demo-app";
 import { Select } from "@/components/demo/select";
 import { HoursEditor } from "@/components/demo/hours-editor";
+import { DRAG_KIND_TYPE, LocationKinds } from "@/components/demo/location-kinds";
 import { cloneHours, DEFAULT_HOURS, type WeeklyHours } from "@/lib/demo/hours";
 import type { LocationKind } from "@/lib/demo/kinds";
 import { __resetDemoStore, demoActions, STORAGE_KEY, useDemoState } from "@/lib/demo/store";
@@ -259,9 +261,29 @@ describe("solar allocation analysis", () => {
     expect(within(chosen).getAllByText(/Grid power 08:00–16:00 \(8 h a day\)/)).toHaveLength(2);
     expect(within(chosen).getByText(/Serves 1,200 people/)).toBeInTheDocument();
     expect(within(chosen).getByText(/From Dar Port · \d+ km/)).toBeInTheDocument();
+    // The popup's order: impact, chosen sites, Gemini's explanation, then the budget curve.
     expect(
-      within(dialog).queryByRole("region", { name: "_What each solar unit buys" }),
-    ).not.toBeInTheDocument();
+      within(dialog)
+        .getAllByRole("region")
+        .map((r) => r.getAttribute("aria-labelledby")),
+    ).toEqual([
+      "allocation-impact-title",
+      "allocation-sites-title",
+      "allocation-explanation-title",
+      "allocation-curve-title",
+    ]);
+    // The budget curve: no solar, then the best 1 and 2 units, from the engine's steps.
+    const curve = within(dialog).getByRole("region", { name: "_Each extra solar unit" });
+    const rows = within(within(curve).getByRole("table")).getAllByRole("row").slice(1);
+    expect(rows.map((r) => r.textContent)).toEqual([
+      "021.6 hNone",
+      "115.0 hMwanza Clinic",
+      "211.5 hCentral Store, Mwanza Clinic",
+    ]);
+    // It reads out the chosen plan, and any point you hover or focus.
+    expect(curve).toHaveTextContent("11.5 h with 2 units: Central Store, Mwanza Clinic");
+    fireEvent.focus(within(curve).getByRole("button", { name: "1 unit: 15.0 h" }));
+    expect(curve).toHaveTextContent("15.0 h with 1 unit: Mwanza Clinic");
     // The popup never names the search strategy.
     expect(dialog.textContent).not.toMatch(/solver|exact|greedy/i);
 
@@ -670,5 +692,84 @@ describe("AnalysisText", () => {
     expect(screen.getByRole("separator")).toBeInTheDocument();
     expect(screen.getByText("<b>not html</b>")).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/###|\*\*/);
+  });
+});
+
+describe("adding a site from the map", () => {
+  it("lets each type be dragged onto the map, or picked and then placed with a click", () => {
+    const onPlace = vi.fn();
+    const { rerender } = render(<LocationKinds locations={[]} onPlace={onPlace} />);
+    const clinic = screen.getByRole("button", { name: /^Place a clinic on the map/ });
+    expect(clinic).toHaveAttribute("draggable", "true");
+
+    const setData = vi.fn();
+    const setDragImage = vi.fn();
+    fireEvent.dragStart(clinic, { dataTransfer: { setData, setDragImage, effectAllowed: "" } });
+    expect(setData).toHaveBeenCalledWith(DRAG_KIND_TYPE, "clinic");
+    // Only the kind's square follows the pointer (not the whole row), held by its centre.
+    const [square, x, y] = setDragImage.mock.calls[0] as [HTMLElement, number, number];
+    expect(square.textContent).toBe("C");
+    expect(square.style.width).toBe("22px");
+    expect([x, y]).toEqual([square.offsetWidth / 2, square.offsetHeight / 2]);
+
+    fireEvent.click(clinic);
+    expect(onPlace).toHaveBeenLastCalledWith("clinic");
+    rerender(<LocationKinds locations={[]} placing="clinic" onPlace={onPlace} />);
+    expect(clinic).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(clinic); // Clicking it again cancels.
+    expect(onPlace).toHaveBeenLastCalledWith(null);
+  });
+
+  it("isn't draggable when the map isn't available", () => {
+    render(<LocationKinds locations={[]} />);
+    expect(screen.queryByRole("button", { name: /^Place a/ })).toBeNull();
+  });
+
+  it("opens the add form at the exact dropped point, and saves it there with its details", () => {
+    const onAdded = vi.fn();
+    const onDropCleared = vi.fn();
+    const dropped = {
+      kind: "clinic" as const,
+      lat: 9.40751,
+      lng: -0.85334,
+      name: "Clinic 1",
+      nonce: 1,
+    };
+    render(
+      <AddLocationForm
+        searchAvailable
+        dropped={dropped}
+        onAdded={onAdded}
+        onDropCleared={onDropCleared}
+      />,
+    );
+    expect(screen.getByText("Dropped on the map")).toBeInTheDocument();
+    expect(screen.getByText("9.4075° N, 0.8533° W")).toBeInTheDocument();
+    expect(screen.getByLabelText("Name")).toHaveValue("Clinic 1");
+    expect(screen.getByRole("combobox", { name: "Type" })).toHaveTextContent("Clinic");
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Tamale North Clinic" } });
+    fireEvent.change(screen.getByLabelText(/Population served/i), {
+      target: { value: "25000" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Add to map/ }));
+
+    function Saved() {
+      return <output data-testid="saved">{JSON.stringify(useDemoState().locations)}</output>;
+    }
+    render(<Saved />);
+    const [site] = JSON.parse(screen.getByTestId("saved").textContent ?? "[]");
+    expect(site).toMatchObject({
+      name: "Tamale North Clinic",
+      kind: "clinic",
+      lat: 9.40751, // exactly where it was dropped
+      lng: -0.85334,
+      address: "9.4075° N, 0.8533° W",
+      population: 25000,
+      gridPower: { from: 8, until: 16 },
+    });
+    expect(site.placeId).toBeUndefined();
+    expect(onAdded).toHaveBeenCalledWith(site.id);
+    expect(onDropCleared).toHaveBeenCalled();
   });
 });

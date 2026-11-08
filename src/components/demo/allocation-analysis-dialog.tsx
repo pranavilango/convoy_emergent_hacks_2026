@@ -16,6 +16,7 @@ import type { Connection, Location } from "@/lib/demo/types";
 import type { BudgetStep, SolarAllocation } from "@/lib/solar-allocation/analyze";
 
 import { AnalysisText } from "./analysis-text";
+import { BudgetCurve } from "./budget-curve";
 import { Button } from "./controls";
 import { KindMark } from "./location-kinds";
 
@@ -266,6 +267,17 @@ function AnalysisResult({
         <Heading id="allocation-explanation-title">_Why these sites</Heading>
         <AnalysisText text={analysis} />
       </section>
+
+      {result.steps.length > 0 && (
+        <section aria-labelledby="allocation-curve-title" className="space-y-2">
+          <Heading id="allocation-curve-title">_Each extra solar unit</Heading>
+          <BudgetCurve
+            baselineHours={allocation.baseline_weighted_hours}
+            steps={result.steps}
+            locations={locations}
+          />
+        </section>
+      )}
 
       <p className="border-t border-white/15 pt-4 text-xs leading-relaxed text-white/50">
         Modelled estimates, not measurements: travel is a straight line at 60 km/h, a site takes in

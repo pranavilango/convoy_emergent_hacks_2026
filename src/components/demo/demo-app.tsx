@@ -8,7 +8,13 @@ import { ConvoyMark } from "@/components/convoy-mark";
 import { findConnection, outgoing } from "@/lib/demo/graph";
 import { unitsAffordable } from "@/lib/demo/budget";
 import { createSampleNetwork } from "@/lib/demo/sample-network";
-import { canSupply, KIND_INFO, LOCATION_KINDS, SUPPLIES } from "@/lib/demo/kinds";
+import {
+  canSupply,
+  KIND_INFO,
+  LOCATION_KINDS,
+  SUPPLIES,
+  type LocationKind,
+} from "@/lib/demo/kinds";
 import { formatPeopleHours, totalClinicPopulation } from "@/lib/demo/population";
 import { cannotReceiveToday } from "@/lib/demo/power";
 import { demoActions, useDemoState } from "@/lib/demo/store";
@@ -16,7 +22,7 @@ import { closeTour, openTour, useTourOpen } from "@/lib/demo/tour";
 import type { Location } from "@/lib/demo/types";
 import { analysisIssues } from "@/lib/solar-allocation/readiness";
 
-import { AddLocationForm } from "./add-location-form";
+import { AddLocationForm, type DroppedSite } from "./add-location-form";
 import { BudgetSection } from "./budget-section";
 import {
   AllocationAnalysisDialog,
@@ -93,6 +99,37 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
   const connectingLocation = connectingFrom
     ? locations.find((l) => l.id === connectingFrom)
     : undefined;
+  // Adding a site from the map: a kind waiting for a click, and a dropped site awaiting details.
+  const [rawPlacing, setPlacing] = useState<LocationKind | null>(null);
+  const placing = problem ? null : rawPlacing;
+  const [dropped, setDropped] = useState<DroppedSite | null>(null);
+  const [pendingPin, setPendingPin] = useState<DroppedSite | null>(null);
+
+  function placeOnMap(kind: LocationKind, lat: number, lng: number) {
+    const count = locations.filter((l) => l.kind === kind).length;
+    const site = {
+      kind,
+      lat,
+      lng,
+      name: `${KIND_INFO[kind].label} ${count + 1}`,
+      nonce: Date.now(),
+    };
+    setPlacing(null);
+    setConnectingFrom(null);
+    setSelection(null);
+    setDropped(site);
+    setPendingPin(site);
+  }
+
+  // Escape cancels placing a site.
+  useEffect(() => {
+    if (!placing) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !event.defaultPrevented) setPlacing(null);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [placing]);
 
   // Escape leaves connect mode first, then clears the selection.
   useEffect(() => {
@@ -228,14 +265,28 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
       <div data-tour="add">
         <AddLocationForm
           searchAvailable={problem === null}
+          dropped={dropped}
           onAdded={(id) => {
             setConnectingFrom(null);
             setSelection({ kind: "location", id });
           }}
+          onDropCleared={() => setPendingPin(null)}
         />
       </div>
       <div data-tour="kinds">
-        <LocationKinds locations={locations} />
+        <LocationKinds
+          locations={locations}
+          placing={placing}
+          {...(problem
+            ? {}
+            : {
+                onPlace: (kind: LocationKind | null) => {
+                  setConnectingFrom(null);
+                  setSelection(null);
+                  setPlacing(kind);
+                },
+              })}
+        />
       </div>
       <div data-tour="locations">
         <LocationList
@@ -336,6 +387,9 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
             setSelection(null);
           }}
           onBackgroundClick={() => (connectingFrom ? stopConnecting() : setSelection(null))}
+          placing={placing}
+          pendingPin={pendingPin}
+          onPlace={placeOnMap}
         />
       )}
       {!problem && (
@@ -348,6 +402,7 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
           }
         />
       )}
+      {placing && <PlacingBanner kind={placing} onCancel={() => setPlacing(null)} />}
       {connectingLocation && (
         <ConnectBanner
           origin={connectingLocation}
@@ -470,6 +525,30 @@ function SampleButton({ onClick }: { onClick: () => void }) {
     >
       Load Ghana sample network
     </button>
+  );
+}
+
+/** While a kind waits to be placed: where to click, and a way out. */
+function PlacingBanner({ kind, onCancel }: { kind: LocationKind; onCancel: () => void }) {
+  return (
+    <div
+      role="status"
+      className="absolute inset-x-4 top-4 z-10 flex items-center justify-between gap-4 rounded-sm bg-aqua px-4 py-3 text-night shadow-lg md:left-1/2 md:right-auto md:w-[26rem] md:-translate-x-1/2"
+    >
+      <div className="min-w-0">
+        <div className="font-mono text-[11px] uppercase tracking-wider opacity-70">
+          _Placing a {KIND_INFO[kind].label.toLowerCase()}
+        </div>
+        <p className="mt-0.5 text-sm">Click the map where it is.</p>
+      </div>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="shrink-0 rounded-sm bg-night px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider text-white outline-none hover:opacity-85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-night"
+      >
+        Cancel · Esc
+      </button>
+    </div>
   );
 }
 

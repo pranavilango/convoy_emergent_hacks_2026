@@ -14,13 +14,24 @@ import {
 } from "@/lib/demo/geometry";
 import { degrees, findConnection, involves } from "@/lib/demo/graph";
 import { summarizeHours } from "@/lib/demo/hours";
-import { canSupply, KIND_INFO, kindLabel, SUPPLIES } from "@/lib/demo/kinds";
+import {
+  canSupply,
+  isLocationKind,
+  KIND_INFO,
+  kindLabel,
+  SUPPLIES,
+  type LocationKind,
+} from "@/lib/demo/kinds";
 import { peopleLabel } from "@/lib/demo/population";
 import { cannotReceiveToday, formatPower } from "@/lib/demo/power";
 import type { Connection, Location } from "@/lib/demo/types";
 import { cn } from "@/lib/utils";
 
+import { DRAG_KIND_TYPE } from "./location-kinds";
 import type { Selection } from "./selection";
+
+/** A new site dropped on the map, waiting for its details in the Add a location form. */
+export type PendingPin = { kind: LocationKind; lat: number; lng: number };
 
 const DEFAULT_CENTER = { lat: 30, lng: 0 };
 const DEFAULT_ZOOM = 2;
@@ -55,6 +66,9 @@ export function MapView({
   onStartConnecting,
   onRemoveConnection,
   onBackgroundClick,
+  placing,
+  pendingPin,
+  onPlace,
 }: {
   mapId: string;
   locations: Location[];
@@ -70,6 +84,12 @@ export function MapView({
   onStartConnecting: (locationId: string) => void;
   onRemoveConnection: (connectionId: string) => void;
   onBackgroundClick: () => void;
+  /** A kind waiting to be placed: the next click on the map puts it there. */
+  placing: LocationKind | null;
+  /** Shown as a dashed square until its details are saved. */
+  pendingPin: PendingPin | null;
+  /** A kind dropped (or click-placed) at an exact point on the map. */
+  onPlace: (kind: LocationKind, lat: number, lng: number) => void;
 }) {
   const locationById = new globalThis.Map(locations.map((l) => [l.id, l]));
   const degreeById = degrees(connections);
@@ -86,185 +106,287 @@ export function MapView({
   const selectedConnection = selectedConnectionId
     ? connections.find((c) => c.id === selectedConnectionId)
     : undefined;
+  const toLatLng = useScreenToLatLng();
+  const [dropTarget, setDropTarget] = useState(false);
 
   return (
-    <Map
-      mapId={mapId}
-      defaultCenter={DEFAULT_CENTER}
-      defaultZoom={DEFAULT_ZOOM}
-      // Flat road map in Google's built-in dark scheme: no Cloud Console styling needed. Can only
-      // be set when the map is created.
-      mapTypeId="roadmap"
-      colorScheme={ColorScheme.DARK}
-      gestureHandling="greedy"
-      disableDefaultUI
-      zoomControl
-      clickableIcons={false}
-      reuseMaps
-      onClick={onBackgroundClick}
-      // Lines are trimmed in screen pixels, so they need the current zoom.
-      onZoomChanged={(e) => setZoom(e.detail.zoom)}
-      onIdle={(e) => setZoom(e.map.getZoom() ?? DEFAULT_ZOOM)}
-      className="h-full w-full"
+    // Location types dragged from the editor land at the exact point they're dropped on.
+    <div
+      className="relative h-full w-full"
+      onDragOver={(event) => {
+        if (!event.dataTransfer.types.includes(DRAG_KIND_TYPE)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+        if (!dropTarget) setDropTarget(true);
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropTarget(false);
+      }}
+      onDrop={(event) => {
+        setDropTarget(false);
+        const kind = event.dataTransfer.getData(DRAG_KIND_TYPE);
+        if (!isLocationKind(kind)) return;
+        event.preventDefault();
+        const point = toLatLng(event.clientX, event.clientY);
+        if (point) onPlace(kind, point.lat, point.lng);
+      }}
     >
-      {connections.map((connection) => {
-        const from = locationById.get(connection.fromId);
-        const to = locationById.get(connection.toId);
-        if (!from || !to) return null;
-        const emphasis: LineEmphasis =
-          selectedConnectionId === connection.id ||
-          (focusLocationId !== null && involves(connection, focusLocationId))
-            ? "strong"
-            : selectedConnectionId !== null || focusLocationId !== null
-              ? "dim"
-              : "normal";
-        return (
-          <ConnectionLine
-            key={connection.id}
-            from={from}
-            to={to}
-            zoom={zoom}
-            // Half the destination square, its 1.5px cream ring, and a little clearance.
-            arrowGap={
-              (size + (to.id === focusLocationId ? ACTIVE_GROWTH_PX : 0)) / 2 +
-              1.5 +
-              ARROW_CLEARANCE_PX
-            }
-            emphasis={emphasis}
-            interactive={!connectingFrom}
-            onClick={() => onSelect({ kind: "connection", id: connection.id })}
-          />
-        );
-      })}
+      <Map
+        mapId={mapId}
+        defaultCenter={DEFAULT_CENTER}
+        defaultZoom={DEFAULT_ZOOM}
+        // Flat road map in Google's built-in dark scheme: no Cloud Console styling needed. Can only
+        // be set when the map is created.
+        mapTypeId="roadmap"
+        colorScheme={ColorScheme.DARK}
+        gestureHandling="greedy"
+        disableDefaultUI
+        zoomControl
+        clickableIcons={false}
+        reuseMaps
+        onClick={(event) => {
+          const point = event.detail.latLng;
+          if (placing && point) onPlace(placing, point.lat, point.lng);
+          else onBackgroundClick();
+        }}
+        {...(placing ? { draggableCursor: "crosshair" } : {})}
+        // Lines are trimmed in screen pixels, so they need the current zoom.
+        onZoomChanged={(e) => setZoom(e.detail.zoom)}
+        onIdle={(e) => setZoom(e.map.getZoom() ?? DEFAULT_ZOOM)}
+        className="h-full w-full"
+      >
+        {connections.map((connection) => {
+          const from = locationById.get(connection.fromId);
+          const to = locationById.get(connection.toId);
+          if (!from || !to) return null;
+          const emphasis: LineEmphasis =
+            selectedConnectionId === connection.id ||
+            (focusLocationId !== null && involves(connection, focusLocationId))
+              ? "strong"
+              : selectedConnectionId !== null || focusLocationId !== null
+                ? "dim"
+                : "normal";
+          return (
+            <ConnectionLine
+              key={connection.id}
+              from={from}
+              to={to}
+              zoom={zoom}
+              // Half the destination square, its 1.5px cream ring, and a little clearance.
+              arrowGap={
+                (size + (to.id === focusLocationId ? ACTIVE_GROWTH_PX : 0)) / 2 +
+                1.5 +
+                ARROW_CLEARANCE_PX
+              }
+              emphasis={emphasis}
+              interactive={!connectingFrom}
+              onClick={() => onSelect({ kind: "connection", id: connection.id })}
+            />
+          );
+        })}
 
-      {connectingFrom && locationById.get(connectingFrom) && (
-        <DraftLine origin={locationById.get(connectingFrom)!} />
-      )}
+        {connectingFrom && locationById.get(connectingFrom) && (
+          <DraftLine origin={locationById.get(connectingFrom)!} />
+        )}
 
-      {locations.map((location) => {
-        const isOrigin = location.id === connectingFrom;
-        const powered = poweredIds?.has(location.id) ?? false;
-        const noPower = cannotReceiveToday(location);
-        const origin = connectingFrom ? locationById.get(connectingFrom) : undefined;
-        const state: SquareState =
-          isOrigin || location.id === focusLocationId
-            ? "active"
-            : !origin
-              ? "idle"
-              : !canSupply(origin.kind, location.kind)
-                ? "unavailable"
-                : findConnection(connections, origin.id, location.id)
-                  ? "linked"
-                  : "candidate";
-        return (
-          <LocationSquare
-            key={location.id}
-            location={location}
-            state={state}
-            powered={powered}
-            dark={noPower && !powered}
-            relit={noPower && powered}
-            size={size}
-            onClick={() => {
-              if (!connectingFrom) onSelect({ kind: "location", id: location.id });
-              else if (state === "linked" || state === "candidate") onConnectTo(location.id);
-            }}
-          />
-        );
-      })}
+        {locations.map((location) => {
+          const isOrigin = location.id === connectingFrom;
+          const powered = poweredIds?.has(location.id) ?? false;
+          const noPower = cannotReceiveToday(location);
+          const origin = connectingFrom ? locationById.get(connectingFrom) : undefined;
+          const state: SquareState =
+            isOrigin || location.id === focusLocationId
+              ? "active"
+              : !origin
+                ? "idle"
+                : !canSupply(origin.kind, location.kind)
+                  ? "unavailable"
+                  : findConnection(connections, origin.id, location.id)
+                    ? "linked"
+                    : "candidate";
+          return (
+            <LocationSquare
+              key={location.id}
+              location={location}
+              state={state}
+              powered={powered}
+              dark={noPower && !powered}
+              relit={noPower && powered}
+              size={size}
+              onClick={() => {
+                if (!connectingFrom) onSelect({ kind: "location", id: location.id });
+                else if (state === "linked" || state === "candidate") onConnectTo(location.id);
+              }}
+            />
+          );
+        })}
 
-      {selectedLocation && (
-        <MapCard position={selectedLocation} gap={(size + ACTIVE_GROWTH_PX) / 2 + 4}>
-          <CardLabel color={KIND_INFO[selectedLocation.kind].color}>
-            {kindLabel(selectedLocation)}
-          </CardLabel>
-          <p className="mt-1.5 text-base leading-tight tracking-tight">{selectedLocation.name}</p>
-          <p className="mt-1 text-xs leading-snug opacity-60">{selectedLocation.address}</p>
-          {poweredIds?.has(selectedLocation.id) && (
-            <p className="mt-2 font-mono text-[10px] uppercase tracking-wider text-aqua">
-              Chosen for solar
-            </p>
-          )}
-          {selectedLocation.kind === "clinic" && (
-            <p className="mt-2 text-sm">
-              {selectedLocation.population === null ? (
-                <span className="opacity-70">Population not set</span>
-              ) : (
-                <>Serves {peopleLabel(selectedLocation.population)}</>
-              )}
-            </p>
-          )}
-          <ul className="mt-2.5 space-y-0.5 font-mono text-[10px] uppercase tracking-wider opacity-80">
-            {selectedLocation.kind === "port" ? (
-              <li>Open 24/7</li>
-            ) : (
-              <>
-                {summarizeHours(selectedLocation.hours).map((line) => (
-                  <li key={line}>{line}</li>
-                ))}
-                <li>Grid power {formatPower(selectedLocation.gridPower).toLowerCase()}</li>
-                {cannotReceiveToday(selectedLocation) && (
-                  <li className={poweredIds?.has(selectedLocation.id) ? "text-aqua" : ""}>
-                    {poweredIds?.has(selectedLocation.id)
-                      ? "Solar lets it take in medicines"
-                      : "No power while staffed: can't take in medicines"}
-                  </li>
+        {selectedLocation && (
+          <MapCard position={selectedLocation} gap={(size + ACTIVE_GROWTH_PX) / 2 + 4}>
+            <CardLabel color={KIND_INFO[selectedLocation.kind].color}>
+              {kindLabel(selectedLocation)}
+            </CardLabel>
+            <p className="mt-1.5 text-base leading-tight tracking-tight">{selectedLocation.name}</p>
+            <p className="mt-1 text-xs leading-snug opacity-60">{selectedLocation.address}</p>
+            {poweredIds?.has(selectedLocation.id) && (
+              <p className="mt-2 font-mono text-[10px] uppercase tracking-wider text-aqua">
+                Chosen for solar
+              </p>
+            )}
+            {selectedLocation.kind === "clinic" && (
+              <p className="mt-2 text-sm">
+                {selectedLocation.population === null ? (
+                  <span className="opacity-70">Population not set</span>
+                ) : (
+                  <>Serves {peopleLabel(selectedLocation.population)}</>
                 )}
-              </>
+              </p>
             )}
-          </ul>
-          <div className="mt-3 flex items-center justify-between border-t border-ink-foreground/15 pt-2.5">
-            <span className="font-mono text-[10px] uppercase tracking-wider opacity-70">
-              {connectionCountLabel(degreeById.get(selectedLocation.id) ?? 0)}
-            </span>
-            {/* Clinics are the end of the chain: nothing to connect to. */}
-            {SUPPLIES[selectedLocation.kind] && (
-              <CardButton onClick={() => onStartConnecting(selectedLocation.id)}>
-                Connect ↘
-              </CardButton>
-            )}
-          </div>
-        </MapCard>
-      )}
-
-      {selectedConnection &&
-        locationById.get(selectedConnection.fromId) &&
-        locationById.get(selectedConnection.toId) && (
-          <MapCard
-            position={visualMidpoint(
-              locationById.get(selectedConnection.fromId)!,
-              locationById.get(selectedConnection.toId)!,
-            )}
-            gap={10}
-          >
-            <CardLabel>Supply link</CardLabel>
-            <p className="mt-1.5 text-sm leading-snug">
-              {locationById.get(selectedConnection.fromId)!.name}
-              <span aria-hidden className="mx-1.5 font-mono opacity-60">
-                →
+            <ul className="mt-2.5 space-y-0.5 font-mono text-[10px] uppercase tracking-wider opacity-80">
+              {selectedLocation.kind === "port" ? (
+                <li>Open 24/7</li>
+              ) : (
+                <>
+                  {summarizeHours(selectedLocation.hours).map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                  <li>Grid power {formatPower(selectedLocation.gridPower).toLowerCase()}</li>
+                  {cannotReceiveToday(selectedLocation) && (
+                    <li className={poweredIds?.has(selectedLocation.id) ? "text-aqua" : ""}>
+                      {poweredIds?.has(selectedLocation.id)
+                        ? "Solar lets it take in medicines"
+                        : "No power while staffed: can't take in medicines"}
+                    </li>
+                  )}
+                </>
+              )}
+            </ul>
+            <div className="mt-3 flex items-center justify-between border-t border-ink-foreground/15 pt-2.5">
+              <span className="font-mono text-[10px] uppercase tracking-wider opacity-70">
+                {connectionCountLabel(degreeById.get(selectedLocation.id) ?? 0)}
               </span>
-              <span className="sr-only"> to </span>
-              {locationById.get(selectedConnection.toId)!.name}
-            </p>
-            <p className="mt-1.5 font-mono text-[10px] uppercase tracking-wider opacity-80">
-              {formatDistance(
-                distanceKm(
-                  locationById.get(selectedConnection.fromId)!,
-                  locationById.get(selectedConnection.toId)!,
-                ),
-              )}{" "}
-              straight line
-            </p>
-            <div className="mt-3 flex justify-end border-t border-ink-foreground/15 pt-2.5">
-              <CardButton onClick={() => onRemoveConnection(selectedConnection.id)}>
-                Remove
-              </CardButton>
+              {/* Clinics are the end of the chain: nothing to connect to. */}
+              {SUPPLIES[selectedLocation.kind] && (
+                <CardButton onClick={() => onStartConnecting(selectedLocation.id)}>
+                  Connect ↘
+                </CardButton>
+              )}
             </div>
           </MapCard>
         )}
 
-      <CameraController locations={locations} focus={focus} />
-    </Map>
+        {selectedConnection &&
+          locationById.get(selectedConnection.fromId) &&
+          locationById.get(selectedConnection.toId) && (
+            <MapCard
+              position={visualMidpoint(
+                locationById.get(selectedConnection.fromId)!,
+                locationById.get(selectedConnection.toId)!,
+              )}
+              gap={10}
+            >
+              <CardLabel>Supply link</CardLabel>
+              <p className="mt-1.5 text-sm leading-snug">
+                {locationById.get(selectedConnection.fromId)!.name}
+                <span aria-hidden className="mx-1.5 font-mono opacity-60">
+                  →
+                </span>
+                <span className="sr-only"> to </span>
+                {locationById.get(selectedConnection.toId)!.name}
+              </p>
+              <p className="mt-1.5 font-mono text-[10px] uppercase tracking-wider opacity-80">
+                {formatDistance(
+                  distanceKm(
+                    locationById.get(selectedConnection.fromId)!,
+                    locationById.get(selectedConnection.toId)!,
+                  ),
+                )}{" "}
+                straight line
+              </p>
+              <div className="mt-3 flex justify-end border-t border-ink-foreground/15 pt-2.5">
+                <CardButton onClick={() => onRemoveConnection(selectedConnection.id)}>
+                  Remove
+                </CardButton>
+              </div>
+            </MapCard>
+          )}
+
+        {pendingPin && <PendingSquare pin={pendingPin} size={size} />}
+
+        <CameraController locations={locations} focus={focus} />
+      </Map>
+      {dropTarget && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 border border-aqua bg-aqua/5"
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Screen point → map coordinates, through the map's own projection (an empty overlay is the
+ * standard way to get it), so a drop lands exactly under the pointer at any zoom.
+ */
+function useScreenToLatLng() {
+  const map = useMap();
+  const overlay = useRef<google.maps.OverlayView | null>(null);
+  useEffect(() => {
+    if (!map) return;
+    const view = new google.maps.OverlayView();
+    view.onAdd = () => {};
+    view.draw = () => {};
+    view.onRemove = () => {};
+    view.setMap(map);
+    overlay.current = view;
+    return () => {
+      view.setMap(null);
+      overlay.current = null;
+    };
+  }, [map]);
+  return (clientX: number, clientY: number): { lat: number; lng: number } | null => {
+    const projection = overlay.current?.getProjection();
+    if (!map || !projection) return null;
+    const box = map.getDiv().getBoundingClientRect();
+    const point = projection.fromContainerPixelToLatLng(
+      new google.maps.Point(clientX - box.left, clientY - box.top),
+    );
+    return point ? { lat: point.lat(), lng: point.lng() } : null;
+  };
+}
+
+/** A dropped site that isn't saved yet: its kind's square, dashed and see-through. */
+function PendingSquare({ pin, size }: { pin: PendingPin; size: number }) {
+  const side = size + ACTIVE_GROWTH_PX;
+  const letter = letterSize(side);
+  return (
+    <AdvancedMarker
+      position={{ lat: pin.lat, lng: pin.lng }}
+      title={`New ${KIND_INFO[pin.kind].label.toLowerCase()} (not saved yet)`}
+      anchorLeft="-50%"
+      anchorTop="-50%"
+      zIndex={950}
+    >
+      <div className="relative font-display">
+        <span
+          className="flex items-center justify-center rounded-sm border-2 border-dashed border-ink-foreground font-semibold leading-none text-ink opacity-80"
+          style={{
+            width: side,
+            height: side,
+            fontSize: letter || MIN_LETTER_PX,
+            backgroundColor: KIND_INFO[pin.kind].color,
+          }}
+        >
+          <span aria-hidden className={cn(letter === 0 && "opacity-0")}>
+            {KIND_INFO[pin.kind].letter}
+          </span>
+        </span>
+        <span className="pointer-events-none absolute bottom-full left-1/2 mb-2 -translate-x-1/2 whitespace-nowrap rounded-sm border border-ink-foreground/25 bg-ink px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-ink-foreground">
+          New · add details
+        </span>
+      </div>
+    </AdvancedMarker>
   );
 }
 

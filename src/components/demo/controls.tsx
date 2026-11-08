@@ -1,4 +1,4 @@
-import type { ComponentProps, InputHTMLAttributes, ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -84,7 +84,7 @@ export function Button({
   );
 }
 
-export function TextInput({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
+export function TextInput({ className, ...props }: ComponentProps<"input">) {
   return (
     <input
       className={cn(

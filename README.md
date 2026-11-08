@@ -80,7 +80,12 @@ editor column on the left that runs in the order you'd fill it in:
    rationed); a note under the power hours says when the site can take in medicines today and
    with solar. Ports are always open.
 3. **Location types** — the three kinds, how many of each are on the map, and how supplies flow
-   (port → warehouse → clinic).
+   (port → warehouse → clinic). Drag a type onto the map to drop a new site at that exact point,
+   or click (tap, or press Enter on) a type and then click the map. The site shows as a dashed
+   square while the Add a location form opens with its coordinates and type filled in; add its
+   name, hours, grid power, and population there, and it's saved at exactly that point (the
+   coordinates are what the engine gets). Escape or **Cancel** stops placing; **Change** discards
+   the dropped point.
 4. **Locations** — every site; open one to rename it or change its type, hours, grid power, or
    population.
 5. **Connections** — who supplies whom. Add links here, or select a port or warehouse on the map,
@@ -211,7 +216,7 @@ hours.
 
 The Next.js server sends the network and the budget's unit count to the Rust optimizer, which
 picks the sites. It also asks for the best sites at every smaller budget (1, 2, … units, up to
-10), which go to Gemini as context. Gemini receives the result and the network's facts (staffed
+10), which the popup charts and Gemini gets as context. Gemini receives the result and the network's facts (staffed
 hours, grid power, when each site takes in medicines today and with solar, people served, supply
 links and distances) and explains the choice in short bullets; it never chooses sites or suggests
 other allocations. The result popup shows:
@@ -222,6 +227,10 @@ other allocations. The result popup shows:
   "Can't take in medicines today"), its staffed and grid power hours, people served, and its
   supplier and distance;
 - **Why these sites** — Gemini's explanation;
+- **Each extra solar unit** — a thin line chart of the population-weighted wait with no solar and
+  with the engine's best sites for 1, 2, … units (from the route's `steps`), labelled at its ends;
+  hovering or focusing a point names its sites, and a hidden table gives screen readers the same
+  numbers (`budget-curve.tsx`);
 - what the model assumes. The weighted times are model estimates, not measured outcomes: travel is
   a straight line at 60 km/h, and clinics count by the people they serve. Validate them against
   real operations data before acting on the recommendations.

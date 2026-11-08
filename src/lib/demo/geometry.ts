@@ -93,3 +93,10 @@ export function pointBeforeEnd(from: LatLng, to: LatLng, zoom: number, px: numbe
   const t = (length - trim) / length;
   return fromWorld({ x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t });
 }
+
+/** "5.6037° N, 0.1870° W": the address of a site dropped on the map rather than searched for. */
+export function formatCoordinates(lat: number, lng: number): string {
+  const part = (value: number, positive: string, negative: string) =>
+    `${Math.abs(value).toFixed(4)}° ${value < 0 ? negative : positive}`;
+  return `${part(lat, "N", "S")}, ${part(lng, "E", "W")}`;
+}

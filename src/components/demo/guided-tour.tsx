@@ -42,8 +42,8 @@ export const TOUR_STOPS: readonly TourStop[] = [
   {
     target: "kinds",
     place: "right",
-    title: "How supplies flow",
-    body: "Port → warehouse → clinic. Each clinic's population decides how much its waits count.",
+    title: "Drag sites onto the map",
+    body: "Or drag a type onto the map to drop a site exactly there (or click a type, then the map), and fill in its details. Supplies flow port → warehouse → clinic.",
   },
   {
     target: "locations",
@@ -92,17 +92,75 @@ type Layout = {
   caret: { side: Side; at: number } | null;
 };
 
+/** A layout for one stop, and whether the scroll to that stop has finished. */
+type Placed = Layout & { stop: number; settled: boolean };
+
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(n, max));
+
+/** Room left above a part when the tour scrolls it to the top. */
+const SCROLL_MARGIN = 24;
+
+type ScrollPlan = {
+  /** The editor column, or null for the page itself (phones). */
+  scroller: HTMLElement | null;
+  from: number;
+  to: number;
+  duration: number;
+};
+
+const scrollTopOf = (scroller: HTMLElement | null) =>
+  scroller ? scroller.scrollTop : window.scrollY;
+
+function setScrollTop(scroller: HTMLElement | null, top: number) {
+  if (scroller) scroller.scrollTop = top;
+  else window.scrollTo(0, top);
+}
+
+/** Slow at both ends: the scroll eases out of where it was and settles gently. */
+const easeInOutCubic = (t: number) => (t < 0.5 ? 4 * t ** 3 : 1 - (-2 * t + 2) ** 3 / 2);
+
+/**
+ * How to bring a part to the top of the view: the editor column on desktop, the page on phones.
+ * Null when nothing needs to move (the header, the map, the floating sample button).
+ */
+function planScroll(target: HTMLElement, reduceMotion: boolean): ScrollPlan | null {
+  if (getComputedStyle(target).position === "fixed") return null;
+  const aside = target.closest("aside");
+  const asideScrolls =
+    aside !== null &&
+    /(auto|scroll)/.test(getComputedStyle(aside).overflowY) &&
+    aside.scrollHeight > aside.clientHeight;
+  if (!asideScrolls && window.innerWidth >= DOCK_BELOW) return null;
+  const scroller = asideScrolls ? aside : null;
+  const viewTop = scroller ? scroller.getBoundingClientRect().top : 0;
+  const max = scroller
+    ? scroller.scrollHeight - scroller.clientHeight
+    : document.documentElement.scrollHeight - window.innerHeight;
+  const from = scrollTopOf(scroller);
+  const to = clamp(
+    from + target.getBoundingClientRect().top - viewTop - SCROLL_MARGIN,
+    0,
+    Math.max(0, max),
+  );
+  const distance = Math.abs(to - from);
+  if (distance < 1) return null;
+  // Longer trips take a little longer, but never drag: 0.6 s to 1 s.
+  const duration = reduceMotion ? 0 : clamp(450 + distance * 0.5, 600, 1000);
+  return { scroller, from, to, duration };
+}
 
 function computeLayout(
   target: HTMLElement | null,
   card: HTMLElement | null,
   place: TourStop["place"],
+  /** How much further the target will scroll up: lay out for where it's going to be. */
+  shift = 0,
 ): Layout | null {
   if (!target || !card) return null;
   const vw = window.innerWidth;
   const vh = window.innerHeight;
-  const r = target.getBoundingClientRect();
+  const raw = target.getBoundingClientRect();
+  const r = { top: raw.top - shift, bottom: raw.bottom - shift, left: raw.left, right: raw.right };
   // Parts of the editor are only visible inside its scrolling column.
   const clip = target.closest("aside")?.getBoundingClientRect() ?? {
     top: 0,
@@ -200,7 +258,7 @@ function computeLayout(
   };
 }
 
-function sameLayout(a: Layout | null, b: Layout | null) {
+function sameLayout(a: Placed | null, b: Placed | null) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
@@ -220,29 +278,38 @@ const CARET: Record<Side, { style: (at: number) => CSSProperties; border: string
  */
 export function GuidedTour({ onClose }: { /** Finished or skipped. */ onClose: () => void }) {
   const [index, setIndex] = useState(0);
-  const [layout, setLayout] = useState<Layout | null>(null);
+  const [layout, setLayout] = useState<Placed | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const nextRef = useRef<HTMLButtonElement>(null);
   const stop = TOUR_STOPS[index]!;
   const last = index === TOUR_STOPS.length - 1;
   const go = (to: number) => setIndex(clamp(to, 0, TOUR_STOPS.length - 1));
 
-  // Bring the part into view, then keep the tooltip beside it as things scroll and resize.
+  // Glide the part into view (an eased scroll, not the browser's quick jump), place the tooltip
+  // where the part will end up, then keep it beside the part as things scroll and resize.
   useEffect(() => {
     const target = document.querySelector<HTMLElement>(`[data-tour="${stop.target}"]`);
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (target?.closest("aside") || window.innerWidth < DOCK_BELOW) {
-      target?.scrollIntoView({ block: "start", behavior: reduce ? "auto" : "smooth" });
-    }
+    const plan = target ? planScroll(target, reduce) : null;
+    const start = performance.now();
+    let scrolling = plan !== null;
     let frame = 0;
-    const follow = () => {
-      const next = computeLayout(target, cardRef.current, stop.place);
-      setLayout((prev) => (sameLayout(prev, next) ? prev : next));
+    const follow = (now: number) => {
+      let shift = 0;
+      if (plan && scrolling) {
+        const t = plan.duration > 0 ? clamp((now - start) / plan.duration, 0, 1) : 1;
+        setScrollTop(plan.scroller, plan.from + (plan.to - plan.from) * easeInOutCubic(t));
+        if (t >= 1) scrolling = false;
+        else shift = plan.to - scrollTopOf(plan.scroller);
+      }
+      const next = computeLayout(target, cardRef.current, stop.place, shift);
+      const placed = next && { ...next, stop: index, settled: !scrolling };
+      setLayout((prev) => (sameLayout(prev, placed) ? prev : placed));
       frame = requestAnimationFrame(follow);
     };
     frame = requestAnimationFrame(follow);
     return () => cancelAnimationFrame(frame);
-  }, [stop]);
+  }, [stop, index]);
 
   // Focus the tooltip's main button on each stop, without scrolling the page to it.
   useEffect(() => {
@@ -283,11 +350,13 @@ export function GuidedTour({ onClose }: { /** Finished or skipped. */ onClose: (
 
   return (
     <>
-      {layout?.outline && stop.outline !== false && (
+      {/* Drawn once the part has stopped moving, fading in (a new one for each stop). */}
+      {layout?.outline && layout.stop === index && layout.settled && stop.outline !== false && (
         <div
+          key={index}
           aria-hidden
           data-testid="tour-outline"
-          className="pointer-events-none fixed z-40 rounded-sm border border-aqua/70"
+          className="pointer-events-none fixed z-40 rounded-sm border border-aqua/70 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-500"
           style={layout.outline}
         />
       )}
@@ -300,6 +369,8 @@ export function GuidedTour({ onClose }: { /** Finished or skipped. */ onClose: (
         onKeyDown={onKeyDown}
         className={cn(
           "fixed z-40 w-72 rounded-sm border border-aqua/70 bg-background p-4 text-foreground shadow-[0_8px_30px_rgb(0_0_0/0.5)]",
+          // Glides from one stop to the next.
+          "transition-[top,left] duration-500 ease-out motion-reduce:transition-none",
           docked === "top" && "inset-x-3 top-3 w-auto",
           docked === "bottom" && "inset-x-3 bottom-3 w-auto",
           // Measured before it's shown, so it never flashes in the wrong place.
