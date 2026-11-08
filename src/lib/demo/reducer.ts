@@ -4,6 +4,7 @@ import { ALWAYS_OPEN, cloneHours, DEFAULT_HOURS, hoursError, parseHours } from "
 import type { WeeklyHours } from "./hours";
 import { canSupply, isLocationKind, isPortMode, type LocationKind, type PortMode } from "./kinds";
 import { isPopulation } from "./population";
+import { isHourWindow, type GridPower } from "./power";
 import type { Connection, DemoState, Location, NewLocation } from "./types";
 
 export const INITIAL_STATE: DemoState = { locations: [], connections: [], budget: EMPTY_BUDGET };
@@ -23,6 +24,8 @@ export type DemoAction =
       portMode?: PortMode;
       /** Refused for ports, which are always open. */
       hours?: WeeklyHours;
+      /** Refused for ports. Null means a reliable grid. A site that becomes a port loses it. */
+      gridPower?: GridPower;
       /** Clinics only. A site that stops being a clinic loses its population; one that becomes a
        *  clinic starts without one unless it's given here. */
       population?: number;
@@ -74,6 +77,8 @@ export function reducer(state: DemoState, action: DemoAction): DemoState {
       const isPort = location.kind === "port";
       if (isPort && !isPortMode(location.portMode)) return state;
       if (!isPort && hoursError(location.hours)) return state;
+      if (location.gridPower !== null && (isPort || !isHourWindow(location.gridPower)))
+        return state;
       const isClinic = location.kind === "clinic";
       if (isClinic && !isPopulation(location.population)) return state;
       const added: Location = {
@@ -82,6 +87,7 @@ export function reducer(state: DemoState, action: DemoAction): DemoState {
         portMode: isPort ? location.portMode : null,
         population: isClinic ? location.population : null,
         hours: cloneHours(isPort ? ALWAYS_OPEN : location.hours),
+        gridPower: location.gridPower && { ...location.gridPower },
         id: action.id,
         createdAt: action.createdAt,
       };
@@ -104,16 +110,20 @@ export function reducer(state: DemoState, action: DemoAction): DemoState {
       }
       if (action.portMode !== undefined && !isPortMode(action.portMode)) return state;
       if (action.hours !== undefined && hoursError(action.hours)) return state;
+      if (action.gridPower != null && !isHourWindow(action.gridPower)) return state;
 
       if (next.kind === "port") {
-        if (action.hours !== undefined) return state;
+        if (action.hours !== undefined || action.gridPower !== undefined) return state;
         next.portMode = action.portMode ?? current.portMode ?? "sea";
         next.hours = cloneHours(ALWAYS_OPEN);
+        next.gridPower = null;
       } else {
         if (action.portMode !== undefined) return state;
         next.portMode = null;
         if (action.hours !== undefined) next.hours = cloneHours(action.hours);
         else if (kindChanged && current.kind === "port") next.hours = cloneHours(DEFAULT_HOURS);
+        if (action.gridPower !== undefined)
+          next.gridPower = action.gridPower && { ...action.gridPower };
       }
 
       if (action.population !== undefined) {
@@ -208,6 +218,8 @@ function parseLocation(value: unknown): Location | null {
     kind,
     portMode: mode,
     hours,
+    // Sites saved before grid power existed load with a reliable grid.
+    gridPower: !isPort && isHourWindow(value["gridPower"]) ? { ...value["gridPower"] } : null,
     // Clinics saved before population existed load as "not set yet".
     population: kind === "clinic" && isPopulation(population) ? population : null,
     createdAt,

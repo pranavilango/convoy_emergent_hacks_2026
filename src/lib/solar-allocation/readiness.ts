@@ -1,4 +1,5 @@
 import { DAYS, formatRange, isOvernight } from "@/lib/demo/hours";
+import { formatWindow, MIN_WINDOW_HOURS, receivingWindows, windowHours } from "@/lib/demo/power";
 import type { Connection, Location } from "@/lib/demo/types";
 
 /**
@@ -9,6 +10,8 @@ import type { Connection, Location } from "@/lib/demo/types";
  *   every clinic is supplied;
  * - all sites form one connected network;
  * - warehouses and clinics are open at least one day, with no overnight shifts;
+ * - each warehouse and clinic is staffed and powered for at least MIN_WINDOW_HOURS a day;
+ * - at least one site loses power during its working hours (otherwise solar changes nothing);
  * - every clinic says how many people it serves;
  * - the budget covers at least one solar unit.
  * Returns an empty list when the network is ready.
@@ -49,6 +52,8 @@ export function analysisIssues(
     );
   }
 
+  let modelled = 0;
+  let powerGaps = 0;
   for (const l of locations) {
     if (l.kind === "port") continue;
     const ranges = DAYS.flatMap((d) => l.hours[d]);
@@ -61,7 +66,32 @@ export function analysisIssues(
       issues.push(
         `${l.name} has an overnight shift (${formatRange(overnight)}), which the optimizer can't model yet. End it at midnight.`,
       );
+      continue;
     }
+    const windows = receivingWindows(l.hours, l.gridPower);
+    if (!windows) continue;
+    modelled++;
+    const today = windows.today ? windowHours(windows.today) : 0;
+    if (today < windowHours(windows.withSolar)) powerGaps++;
+    if (windowHours(windows.staffed) < MIN_WINDOW_HOURS) {
+      issues.push(
+        `${l.name} is staffed for under ${MIN_WINDOW_HOURS} hours a day. Give it longer hours.`,
+      );
+    } else if (!windows.today) {
+      issues.push(
+        `${l.name} never has power while it's staffed (power ${formatWindow(l.gridPower!)}, staffed ${formatWindow(windows.staffed)}). Widen its power or working hours.`,
+      );
+    } else if (windowHours(windows.today) < MIN_WINDOW_HOURS) {
+      issues.push(
+        `${l.name} is staffed and powered for only ${windowHours(windows.today)} hour a day (${formatWindow(windows.today)}). The optimizer needs at least ${MIN_WINDOW_HOURS}, so widen its power or working hours.`,
+      );
+    }
+  }
+
+  if (modelled > 0 && powerGaps === 0) {
+    issues.push(
+      "No site loses power during its working hours, so solar wouldn't shorten any waits. Set the grid power hours of sites with power cuts.",
+    );
   }
 
   for (const l of locations) {

@@ -141,16 +141,19 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
         body: JSON.stringify({
           n: solarUnits,
           network: {
-            locations: locations.map(({ id, name, kind, lat, lng, population, hours }) => ({
-              id,
-              name,
-              kind,
-              lat,
-              lng,
-              population,
-              // The Rust API mapping derives a single daily window from these weekly hours.
-              hours,
-            })),
+            locations: locations.map(
+              ({ id, name, kind, lat, lng, population, hours, gridPower }) => ({
+                id,
+                name,
+                kind,
+                lat,
+                lng,
+                population,
+                // The server turns these into one daily window: staffed and powered.
+                hours,
+                gridPower,
+              }),
+            ),
             connections: connections.map(({ fromId, toId }) => ({ fromId, toId })),
           },
         }),

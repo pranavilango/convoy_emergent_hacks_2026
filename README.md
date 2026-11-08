@@ -66,8 +66,9 @@ and "on" states.
 
 "Try the demo" opens a map editor for a medical supply network. Search an address and add it as a
 **port** (sea or air), **warehouse**, or **clinic** (with the population it serves); it's pinned
-on the map as a colored square marked P, W, or C. Warehouses and clinics get working hours (the grid, the region, and staffing all vary); ports are
-always open. Connect sites to show how supplies flow: select a port or warehouse, press
+on the map as a colored square marked P, W, or C. Warehouses and clinics get working hours and
+**grid power** hours (all day, or one daily window such as 08:00–16:00 where power is rationed);
+ports are always open. **Load Ghana sample network** fills in a ready-made corridor for a demo. Connect sites to show how supplies flow: select a port or warehouse, press
 **Connect**, then click the sites it supplies (click again to unlink). You can also connect from
 the panel. Everything is saved in the browser (`localStorage`, key `convoy.demo.v2`). Each visitor
 sees only their own data, and clearing site data resets it.
@@ -78,7 +79,8 @@ The network is a directed graph, ready to hand to the allocation engine:
   `portMode` `"sea"` or `"air"` (null for other kinds). `hours` is one list of `{ open, close }`
   ranges per day (`mon`–`sun`), in minutes since midnight. An empty list means closed,
   `close < open` runs past midnight, and `close: 1440` means "until midnight". Ports are always
-  24/7. Clinics have `population`, the number of people they serve (a whole number from 1 to
+  24/7. `gridPower` is `{ from, until }` in whole hours (0–24, the same every day), or null for a
+  reliable grid (and always for ports). Clinics have `population`, the number of people they serve (a whole number from 1 to
   100,000,000); it's null for other kinds, and for a clinic until it's set.
 - **Connections** are the edges, stored as `{ id, fromId, toId }`. Supplies flow one way, so the
   only allowed links are port → warehouse and warehouse → clinic (no loops, nothing backwards,
@@ -95,7 +97,8 @@ discarded on load.
 
 - Page: `src/app/demo/page.tsx`. UI: `src/components/demo/`.
 - State: `src/lib/demo/`. `kinds.ts` defines the three kinds and the supply rule, `reducer.ts`
-  enforces it, `graph.ts` has the connection helpers, `hours.ts` working hours, `population.ts`
+  enforces it, `graph.ts` has the connection helpers, `hours.ts` working hours, `power.ts` grid
+  power and when a site can take in medicines, `sample-network.ts` the Ghana sample, `population.ts`
   clinic population, `budget.ts` the solar budget, `geometry.ts` distance and marker sizing, and
   `store.ts` handles saving.
 
@@ -118,14 +121,13 @@ the built-in engine. The HTTP server is the crate's default `server` feature; th
 build uses the library without it.
 
 Before Analyze unlocks, the panel lists anything the engine would reject, by site name: unlinked
-sites, separate networks, sites closed all week or with overnight shifts, clinics without a
-population, or a budget below one unit (`src/lib/solar-allocation/readiness.ts`). A result shows
-the drop in population-weighted wait, each chosen site (hours → 24/7, people served, supply
-link), what each extra solar unit buys (the route also asks the engine for the best 1, 2, … units,
+sites, separate networks, sites closed all week or with overnight shifts, sites that are never (or
+under two hours) both staffed and powered, a network with no power cuts at all (solar would change
+nothing), clinics without a population, or a budget below one unit
+(`src/lib/solar-allocation/readiness.ts`). A result shows the drop in population-weighted wait,
+each chosen site (when it takes in medicines today → with solar, people served, supply link), what each extra solar unit buys (the route also asks the engine for the best 1, 2, … units,
 up to 10), and Gemini's plain-language explanation built from those facts. Chosen sites glow on
 the map until the network changes.
-The backend accepts one daily opening window per site. Convoy represents each weekly schedule with
-the envelope from its earliest opening to latest closing; Gemini explains this modeling limit.
 
 ### Google Maps setup
 
@@ -147,13 +149,22 @@ it does not choose sites or generate alternative allocations. The popup shows se
 weighted delivery-time metrics, and Gemini's explanation.
 
 The weighted times are model estimates, not measured outcomes. The optimizer uses coordinates for
-transit time, opening windows for waiting time, and clinic population as a weight. The Rust API only
-accepts one daily window per site, so Convoy represents each weekly schedule with the envelope from
-earliest opening to latest closing. Validate the model against real operations data before acting on
-its recommendations.
+transit time, opening windows for waiting time, and clinic population as a weight. A site can only
+take in medicines while it's staffed and has power to keep them cold, so its window today is its
+staffed hours (one daily span, from the earliest opening to the latest closing across the week)
+narrowed to its grid power hours. Solar lifts the power limit, so its window with solar is the
+staffed span; the engine gets both (`open_from`/`open_until` and `solar_open_from`/
+`solar_open_until`, see [API.md](API.md)). Validate the model against real operations data before
+acting on its recommendations.
+
+The route is public and every new analysis calls Gemini, so it's protected
+(`src/lib/solar-allocation/guard.ts`): each IP gets 30 analyses per 10 minutes and each server
+instance 300 per hour (then `429` with `Retry-After`), and a network analyzed in the last hour is
+answered from cache, instantly and without counting. Limits are per instance; for a hard global cap
+also add a rate-limit rule in Vercel's Firewall.
 
 The Next.js route accepts a positive integer `n` and a `network` containing site coordinates,
-weekly hours, clinic population, and directed connections. It converts these into the Rust graph
+weekly hours, grid power, clinic population, and directed connections. It converts these into the Rust graph
 format and uploads a JSON `file` to `POST /api/analyze?n=<n>&strategy=auto`; see [API.md](API.md)
 for the backend contract. The response has `selected`, `n`, `solver`, `baseline_weighted_hours`, and
 `optimized_weighted_hours`; the API route returns that allocation with Gemini's `analysis`.

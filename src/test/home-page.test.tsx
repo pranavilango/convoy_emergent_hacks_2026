@@ -4,16 +4,34 @@ import { describe, expect, it } from "vitest";
 import Home, { metadata } from "@/app/page";
 
 describe("Home page", () => {
-  it("renders the hero, every section anchor, and all four inputs", () => {
+  it("renders the hero, every section anchor, all six inputs, and what you get", () => {
     render(<Home />);
 
     expect(screen.getByRole("heading", { level: 1, name: "Convoy" })).toBeInTheDocument();
-    for (const id of ["problem", "solution", "how"]) {
+    for (const id of ["problem", "solution", "how", "results"]) {
       expect(document.getElementById(id)).not.toBeNull();
     }
-    for (const input of ["Ports", "Warehouses", "Clinics", "Working hours"]) {
+    for (const input of [
+      "Ports",
+      "Warehouses",
+      "Clinics",
+      "Working hours",
+      "Grid power",
+      "Budget",
+    ]) {
       expect(screen.getAllByText(input).length).toBeGreaterThan(0);
     }
+    // Only what the product does: each output is in the hero and in "What you get".
+    for (const output of [
+      "Solar priority",
+      "Grid gaps",
+      "Delivery waits",
+      "Budget curve",
+      "Explained plans",
+    ]) {
+      expect(screen.getAllByText(output)).toHaveLength(2);
+    }
+    expect(document.body.textContent).not.toMatch(/Panel sizing|Battery backup|batteries/);
     expect(screen.getByText("Power Planner")).toBeInTheDocument();
     expect(screen.getByAltText(/^Earth at night/)).toBeInTheDocument();
   });
@@ -37,7 +55,7 @@ describe("Home page", () => {
     // The navbar logo stays steady and is all white.
     const logo = container.querySelector("header svg");
     expect(logo?.closest(".flicker-in")).toBeNull();
-    expect(logo).toHaveClass("fill-white", "stroke-white");
+    expect(logo).toHaveClass("fill-aqua", "stroke-aqua");
   });
 
   it("flickers on the kilowatt line and the footer as they scroll into view", () => {

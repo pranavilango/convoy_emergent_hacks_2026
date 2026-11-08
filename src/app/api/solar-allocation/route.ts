@@ -7,8 +7,17 @@ import {
   MedrouteApiError,
   type SolarAllocationNetwork,
 } from "@/lib/solar-allocation/analyze";
+import {
+  cacheAnalysis,
+  cachedAnalysis,
+  clientKey,
+  requestKey,
+  takeAnalysis,
+  waitLabel,
+} from "@/lib/solar-allocation/guard";
 import { DAYS } from "@/lib/demo/hours";
 import { isLocationKind } from "@/lib/demo/kinds";
+import { isHourWindow } from "@/lib/demo/power";
 
 const MAX_REQUEST_SIZE = 1_000_000;
 
@@ -42,15 +51,33 @@ export async function POST(request: Request) {
     );
   }
 
+  const network = body["network"];
+  const n = body["n"] as number;
+  // The same network again (e.g. re-running a demo) is answered from cache: instant, and free.
+  const key = requestKey({ network, n });
+  const cached = cachedAnalysis(key);
+  if (cached !== undefined) return Response.json(cached);
+
+  const allowed = takeAnalysis(clientKey(request));
+  if (!allowed.ok) {
+    return Response.json(
+      {
+        error: `Too many analyses in a short time. Try again in ${waitLabel(allowed.retryAfterSeconds)}.`,
+      },
+      { status: 429, headers: { "Retry-After": String(allowed.retryAfterSeconds) } },
+    );
+  }
+
   let stage: "Rust backend" | "Gemini" = "Rust backend";
   try {
-    const network = body["network"];
-    const allocation = await generateSolarAllocation(network, body["n"] as number);
+    const allocation = await generateSolarAllocation(network, n);
     // The best sites for 1, 2, … units, so the result can show what each extra unit buys.
     const steps = await generateBudgetCurve(network, allocation);
     stage = "Gemini";
     const analysis = await analyzeSolarAllocation(network, allocation, steps);
-    return Response.json({ allocation, steps, analysis });
+    const result = { allocation, steps, analysis };
+    cacheAnalysis(key, result);
+    return Response.json(result);
   } catch (error) {
     console.error("Solar allocation analysis failed:", error);
 
@@ -129,6 +156,9 @@ function isSolarAllocationNetwork(value: unknown): value is SolarAllocationNetwo
       (location["population"] === undefined ||
         location["population"] === null ||
         (isFiniteNumber(location["population"]) && location["population"] >= 0)) &&
+      (location["gridPower"] === undefined ||
+        location["gridPower"] === null ||
+        isHourWindow(location["gridPower"])) &&
       isWeeklyHours(location["hours"]),
   );
   const connectionsValid = value["connections"].every(

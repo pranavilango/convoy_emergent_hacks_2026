@@ -4,6 +4,7 @@ import { useSyncExternalStore } from "react";
 
 import type { WeeklyHours } from "./hours";
 import type { LocationKind, PortMode } from "./kinds";
+import type { GridPower } from "./power";
 import { INITIAL_STATE, parseState, reducer, type DemoAction } from "./reducer";
 import type { DemoState, NewLocation } from "./types";
 
@@ -118,6 +119,10 @@ export const demoActions = {
   },
   setLocationHours(id: string, hours: WeeklyHours) {
     dispatch({ type: "updateLocation", id, hours });
+  },
+  /** Null means a reliable grid. */
+  setGridPower(id: string, gridPower: GridPower) {
+    dispatch({ type: "updateLocation", id, gridPower });
   },
   removeLocation(id: string) {
     dispatch({ type: "removeLocation", id });

@@ -28,6 +28,7 @@ import {
   Swatch,
   TextInput,
 } from "./controls";
+import { GridPowerField } from "./grid-power-field";
 import { HoursEditor } from "./hours-editor";
 import { KIND_OPTIONS, PORT_MODE_OPTIONS } from "./location-kinds";
 import { PopulationInput } from "./population-input";
@@ -176,6 +177,13 @@ function LocationEditor({
       )}
       {location.kind === "clinic" && <ClinicPopulation location={location} />}
       <LocationHours location={location} />
+      {location.kind !== "port" && (
+        <GridPowerField
+          value={location.gridPower}
+          hours={location.hours}
+          onChange={(power) => demoActions.setGridPower(location.id, power)}
+        />
+      )}
       <LocationConnections
         location={location}
         locations={locations}

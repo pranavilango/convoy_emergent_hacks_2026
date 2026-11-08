@@ -1,16 +1,19 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "@/app/api/solar-allocation/route";
 import {
   analyzeSolarAllocation,
   type SolarAllocation,
   type SolarAllocationNetwork,
 } from "@/lib/solar-allocation/analyze";
+import { __resetAnalysisGuard, PER_CLIENT, takeAnalysis } from "@/lib/solar-allocation/guard";
 
 const savedEnv = {
   apiKey: process.env["GEMINI_API_KEY"],
   model: process.env["GEMINI_MODEL"],
   backend: process.env["MEDROUTE_API_URL"],
 };
+
+beforeEach(() => __resetAnalysisGuard());
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -49,6 +52,7 @@ const network: SolarAllocationNetwork = {
       lng: 36.7,
       population: null,
       hours: dailyHours,
+      gridPower: { from: 6, until: 14 },
     },
     {
       id: "clinic-1",
@@ -58,6 +62,7 @@ const network: SolarAllocationNetwork = {
       lng: 32.9,
       population: 12_400,
       hours: dailyHours,
+      gridPower: { from: 12, until: 20 },
     },
   ],
   connections: [
@@ -93,6 +98,10 @@ describe("solar allocation analysis", () => {
     expect(prompt).toContain("Clinic A");
     expect(prompt).toContain("12400");
     expect(prompt).toContain("Mon–Fri 09:00–17:00");
+    // When each site can take in medicines: staffed and powered, then with solar.
+    expect(prompt).toMatch(/gridPower\W+06:00–14:00 \(8 h a day\)/);
+    expect(prompt).toMatch(/takesInMedicinesToday\W+09:00–14:00/);
+    expect(prompt).toMatch(/takesInMedicinesWithSolar\W+09:00–17:00/);
     expect(prompt).toContain("21.6"); // weighted hours before, rounded
     expect(prompt).toMatch(/Central Store[^}]*km/);
     // Guardrails: explain, don't re-decide; no ids or method talk.
@@ -159,12 +168,23 @@ describe("solar allocation analysis", () => {
       longitude: 39.3,
       kind: "source",
     });
+    // Window today = staffed 09–17 ∩ powered 06–14 = 09–14; with solar = staffed. [a, b] = a:00
+    // to (b+1):00.
     expect(graph.nodes[1]).toMatchObject({
       kind: "pass_through",
       open_from: 9,
-      open_until: 16,
+      open_until: 13,
+      solar_open_from: 9,
+      solar_open_until: 16,
     });
-    expect(graph.nodes[2]).toMatchObject({ kind: "destination", priority: 12_400 });
+    expect(graph.nodes[2]).toMatchObject({
+      kind: "destination",
+      open_from: 12,
+      open_until: 16,
+      solar_open_from: 9,
+      solar_open_until: 16,
+      priority: 12_400,
+    });
     expect(graph.edges).toEqual([
       { from: "port-1", to: "warehouse-1" },
       { from: "warehouse-1", to: "clinic-1" },
@@ -294,6 +314,71 @@ describe("solar allocation analysis", () => {
       }),
     );
     expect(missingUnits.status).toBe(400);
+  });
+});
+
+describe("protecting the public Analyze route", () => {
+  const geminiOnly = () =>
+    vi.fn((url: string) => {
+      if (!url.includes("generativelanguage")) throw new Error(`Unexpected fetch: ${url}`);
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ candidates: [{ content: { parts: [{ text: "Explained." }] } }] }),
+          { status: 200 },
+        ),
+      );
+    });
+  const analyze = (n: number, ip = "203.0.113.7") =>
+    POST(
+      new Request("http://localhost/api/solar-allocation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-forwarded-for": `${ip}, 10.0.0.1` },
+        body: JSON.stringify({ network, n }),
+      }),
+    );
+
+  it("answers a repeated analysis from cache, without calling Gemini again", async () => {
+    delete process.env["MEDROUTE_API_URL"];
+    process.env["GEMINI_API_KEY"] = "test-api-key";
+    const fetchMock = geminiOnly();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = await analyze(2);
+    const second = await analyze(2);
+    expect(second.status).toBe(200);
+    expect(await second.json()).toEqual(await first.json());
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("limits each client, tells them when to retry, and still serves cached results", async () => {
+    delete process.env["MEDROUTE_API_URL"];
+    process.env["GEMINI_API_KEY"] = "test-api-key";
+    vi.stubGlobal("fetch", geminiOnly());
+
+    expect((await analyze(2)).status).toBe(200);
+    for (let i = 1; i < PER_CLIENT.max; i++) {
+      expect(takeAnalysis("203.0.113.7").ok).toBe(true);
+    }
+    const limited = await analyze(1);
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get("Retry-After"))).toBeGreaterThan(0);
+    expect((await limited.json()).error).toMatch(
+      /^Too many analyses in a short time\. Try again in about \d+ minutes\.$/,
+    );
+
+    // The network it already analyzed is still answered, and other clients aren't affected.
+    expect((await analyze(2)).status).toBe(200);
+    expect((await analyze(1, "198.51.100.2")).status).toBe(200);
+  });
+
+  it("frees a client's slots as their window passes", () => {
+    const start = 1_000_000;
+    for (let i = 0; i < PER_CLIENT.max; i++) expect(takeAnalysis("a", start).ok).toBe(true);
+    expect(takeAnalysis("a", start + 1000)).toEqual({
+      ok: false,
+      retryAfterSeconds: PER_CLIENT.windowMs / 1000 - 1,
+    });
+    expect(takeAnalysis("a", start + PER_CLIENT.windowMs).ok).toBe(true);
   });
 });
 

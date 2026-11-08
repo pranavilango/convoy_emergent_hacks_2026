@@ -50,6 +50,7 @@ function addLocation(kind: LocationKind, name: string) {
     portMode: kind === "port" ? "sea" : null,
     hours: cloneHours(DEFAULT_HOURS),
     population: kind === "clinic" ? 1200 : null,
+    gridPower: kind === "port" ? null : { from: 8, until: 16 },
   });
 }
 
@@ -176,9 +177,12 @@ describe("solar allocation analysis", () => {
     ).toBeInTheDocument();
     expect(within(dialog).getByText("−10.1 h")).toBeInTheDocument();
     expect(within(dialog).getByText(/21\.6 h → 11\.5 h · 47% shorter/)).toBeInTheDocument();
-    // Each chosen site: its hours now → 24/7, people served, and where it's supplied from.
+    // Each chosen site: when it takes in medicines now (staffed 9–5, powered 8–4) and with solar,
+    // people served, and where it's supplied from.
     const chosen = within(dialog).getByRole("region", { name: "_Chosen for solar" });
-    expect(within(chosen).getAllByText("→ open 24/7")).toHaveLength(2);
+    expect(within(chosen).getAllByText(/Takes in medicines 09:00–16:00/)).toHaveLength(2);
+    expect(within(chosen).getAllByText("→ 09:00–17:00 with solar (+1 h a day)")).toHaveLength(2);
+    expect(within(chosen).getAllByText(/Grid power 08:00–16:00 \(8 h a day\)/)).toHaveLength(2);
     expect(within(chosen).getByText(/Serves 1,200 people/)).toBeInTheDocument();
     expect(within(chosen).getByText(/From Dar Port · \d+ km/)).toBeInTheDocument();
     // What each unit buys.
@@ -195,6 +199,7 @@ describe("solar allocation analysis", () => {
         name: "Mwanza Clinic",
         population: 1200,
         hours: expect.objectContaining({ mon: [{ open: 540, close: 1020 }], sat: [], sun: [] }),
+        gridPower: { from: 8, until: 16 },
       }),
     );
 

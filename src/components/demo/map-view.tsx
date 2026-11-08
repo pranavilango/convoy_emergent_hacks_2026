@@ -16,6 +16,7 @@ import { degrees, findConnection, involves } from "@/lib/demo/graph";
 import { summarizeHours } from "@/lib/demo/hours";
 import { canSupply, KIND_INFO, kindLabel, SUPPLIES } from "@/lib/demo/kinds";
 import { peopleLabel } from "@/lib/demo/population";
+import { formatPower } from "@/lib/demo/power";
 import type { Connection, Location } from "@/lib/demo/types";
 import { cn } from "@/lib/utils";
 
@@ -177,7 +178,7 @@ export function MapView({
           <p className="mt-1 text-xs leading-snug opacity-60">{selectedLocation.address}</p>
           {poweredIds?.has(selectedLocation.id) && (
             <p className="mt-2 font-mono text-[10px] uppercase tracking-wider text-aqua">
-              Chosen for solar · open 24/7
+              Chosen for solar
             </p>
           )}
           {selectedLocation.kind === "clinic" && (
@@ -193,7 +194,12 @@ export function MapView({
             {selectedLocation.kind === "port" ? (
               <li>Open 24/7</li>
             ) : (
-              summarizeHours(selectedLocation.hours).map((line) => <li key={line}>{line}</li>)
+              <>
+                {summarizeHours(selectedLocation.hours).map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+                <li>Grid power {formatPower(selectedLocation.gridPower).toLowerCase()}</li>
+              </>
             )}
           </ul>
           <div className="mt-3 flex items-center justify-between border-t border-ink-foreground/15 pt-2.5">

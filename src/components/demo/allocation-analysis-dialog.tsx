@@ -3,9 +3,15 @@
 import type { KeyboardEvent, ReactNode } from "react";
 
 import { distanceKm, formatDistance } from "@/lib/demo/geometry";
-import { summarizeHours } from "@/lib/demo/hours";
 import { kindLabel } from "@/lib/demo/kinds";
 import { peopleLabel } from "@/lib/demo/population";
+import {
+  describeStaffing,
+  formatPower,
+  formatWindow,
+  receivingWindows,
+  windowHours,
+} from "@/lib/demo/power";
 import type { Connection, Location } from "@/lib/demo/types";
 import type { BudgetStep, SolarAllocation } from "@/lib/solar-allocation/analyze";
 
@@ -96,6 +102,8 @@ export function AllocationAnalysisDialog({
                   <code>MEDROUTE_API_URL</code> from the server&apos;s environment to use the
                   built-in engine.
                 </>
+              ) : error?.startsWith("Too many analyses") ? (
+                "The public demo limits how often each visitor can analyze. Analyzing a network you already analyzed doesn't count."
               ) : error?.includes("Gemini") ? (
                 "Check GEMINI_API_KEY and server network access, then try Analyze again."
               ) : (
@@ -160,8 +168,8 @@ function AnalysisResult({
         </p>
         <p className="text-sm text-white/60">
           Weighted by the people each clinic serves. With {allocation.selected.length} solar{" "}
-          {allocation.selected.length === 1 ? "unit" : "units"}, these sites stay open around the
-          clock.
+          {allocation.selected.length === 1 ? "unit" : "units"}, these sites take in medicines
+          whenever they&apos;re staffed, not only when the grid is on.
           {coversEverySite &&
             ` Your budget covers every warehouse and clinic, so all ${allocation.selected.length} are included.`}
         </p>
@@ -173,6 +181,10 @@ function AnalysisResult({
           {allocation.selected.map((id) => {
             const site = byId.get(id);
             if (!site) return null;
+            const windows = receivingWindows(site.hours, site.gridPower);
+            const gained = windows
+              ? windowHours(windows.withSolar) - (windows.today ? windowHours(windows.today) : 0)
+              : 0;
             const suppliers = connections
               .filter((c) => c.toId === id)
               .map((c) => byId.get(c.fromId))
@@ -187,9 +199,21 @@ function AnalysisResult({
                       {kindLabel(site)}
                     </span>
                   </div>
-                  <p className="text-sm text-white/75">
-                    {summarizeHours(site.hours).join(", ")}{" "}
-                    <span className="text-aqua">→ open 24/7</span>
+                  {windows && (
+                    <p className="text-sm text-white/75">
+                      Takes in medicines {windows.today ? formatWindow(windows.today) : "never"}{" "}
+                      <span className="text-aqua">
+                        →{" "}
+                        {windowHours(windows.withSolar) === 24
+                          ? "around the clock"
+                          : formatWindow(windows.withSolar)}{" "}
+                        with solar{gained > 0 && ` (+${gained} h a day)`}
+                      </span>
+                    </p>
+                  )}
+                  <p className="text-xs text-white/60">
+                    Staffed {describeStaffing(site.hours)} · Grid power{" "}
+                    {formatPower(site.gridPower).toLowerCase()}
                   </p>
                   <p className="font-mono text-[11px] uppercase tracking-wider text-white/50">
                     {[
@@ -250,9 +274,10 @@ function AnalysisResult({
       </section>
 
       <p className="border-t border-white/15 pt-4 text-xs leading-relaxed text-white/50">
-        Modelled estimates, not measurements: travel is a straight line at 60 km/h, each site uses
-        its widest daily opening hours, and clinics count by the people they serve. Check them
-        against real delivery records before committing funds.
+        Modelled estimates, not measurements: travel is a straight line at 60 km/h, a site takes in
+        medicines only while it&apos;s staffed (its widest daily hours) and powered, and clinics
+        count by the people they serve. Check them against real delivery records before committing
+        funds.
       </p>
     </div>
   );

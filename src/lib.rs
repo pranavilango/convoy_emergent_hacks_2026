@@ -6,9 +6,10 @@
 //! `source -> pass-through -> destination`. Every pass-through and destination
 //! has a daily opening window `[a, b]` (whole hours, `0 <= a < b < 24`);
 //! sources are always available. Given a budget of `n` nodes, the solver picks
-//! the pass-throughs/destinations whose window should be replaced by `[0, 23]`
-//! (because they get solar power) so that the weighted time-to-delivery of the
-//! whole network is minimised.
+//! the pass-throughs/destinations that get solar power so that the weighted
+//! time-to-delivery of the whole network is minimised. A node with solar power
+//! switches to its *solar window* (default `[0, 23]`, open 24/7; a site that
+//! is only staffed part of the day can say so).
 //!
 //! ## Model, in the order the code is organised
 //!
@@ -73,6 +74,13 @@ pub enum ModelError {
     InvalidLongitude(f64),
     #[error("opening window [{start}, {end}] is invalid: need 0 <= start < end < 24")]
     InvalidWindow { start: i64, end: i64 },
+    #[error("solar window [{solar_start}, {solar_end}] must contain the opening window [{start}, {end}]")]
+    SolarWindowTooNarrow {
+        start: u8,
+        end: u8,
+        solar_start: u8,
+        solar_end: u8,
+    },
     #[error("priority {0} must be finite and non-negative")]
     InvalidPriority(f64),
     #[error("departure hour {0} must be finite and in [0, 24)")]
@@ -238,6 +246,11 @@ impl TimeWindow {
         self.end
     }
 
+    /// Whether `self` covers every hour that `other` does.
+    pub fn contains(self, other: TimeWindow) -> bool {
+        self.start <= other.start && other.end <= self.end
+    }
+
     /// Whether the window covers the whole day (`[0, 23]`).
     pub fn is_always_open(self) -> bool {
         self.start == 0 && self.end == 23
@@ -369,11 +382,15 @@ pub enum Node {
         id: String,
         location: Coordinate,
         window: TimeWindow,
+        /// The window once the node has solar power. Contains `window`.
+        solar_window: TimeWindow,
     },
     Destination {
         id: String,
         location: Coordinate,
         window: TimeWindow,
+        /// The window once the node has solar power. Contains `window`.
+        solar_window: TimeWindow,
         priority: Priority,
     },
 }
@@ -409,6 +426,16 @@ impl Node {
         }
     }
 
+    /// The window with solar power. `None` for sources.
+    pub fn solar_window(&self) -> Option<TimeWindow> {
+        match self {
+            Node::Source { .. } => None,
+            Node::PassThrough { solar_window, .. } | Node::Destination { solar_window, .. } => {
+                Some(*solar_window)
+            }
+        }
+    }
+
     /// `Some` only for destinations.
     pub fn priority(&self) -> Option<Priority> {
         match self {
@@ -432,6 +459,7 @@ impl Node {
 pub struct Leg {
     pub pass_through: NodeIndex,
     pub window: TimeWindow,
+    pub solar_window: TimeWindow,
     pub inbound_hours: f64,
     pub outbound_hours: f64,
 }
@@ -441,6 +469,7 @@ pub struct Leg {
 pub struct Route {
     pub destination: NodeIndex,
     pub window: TimeWindow,
+    pub solar_window: TimeWindow,
     pub priority: Priority,
     pub legs: Vec<Leg>,
 }
@@ -536,6 +565,7 @@ impl Graph {
             if let Node::Destination {
                 location,
                 window,
+                solar_window,
                 priority,
                 ..
             } = node
@@ -546,6 +576,7 @@ impl Graph {
                     if let Node::PassThrough {
                         location: p_loc,
                         window: p_window,
+                        solar_window: p_solar_window,
                         ..
                     } = &nodes[p.0]
                     {
@@ -557,6 +588,7 @@ impl Graph {
                         legs.push(Leg {
                             pass_through: p,
                             window: *p_window,
+                            solar_window: *p_solar_window,
                             inbound_hours,
                             outbound_hours: p_loc.travel_hours(*location),
                         });
@@ -565,6 +597,7 @@ impl Graph {
                 routes.push(Route {
                     destination: NodeIndex(i),
                     window: *window,
+                    solar_window: *solar_window,
                     priority: *priority,
                     legs,
                 });
@@ -647,7 +680,7 @@ pub fn is_weakly_connected(
 // Upgrade sets
 // ---------------------------------------------------------------------------
 
-/// A set of nodes whose window is replaced by [`TimeWindow::ALWAYS_OPEN`].
+/// A set of nodes that get solar power, i.e. switch to their solar window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpgradeSet {
     flags: Vec<bool>,
@@ -724,9 +757,14 @@ impl UpgradeSet {
 // Evaluation
 // ---------------------------------------------------------------------------
 
-fn effective_window(upgrades: &UpgradeSet, node: NodeIndex, original: TimeWindow) -> TimeWindow {
+fn effective_window(
+    upgrades: &UpgradeSet,
+    node: NodeIndex,
+    original: TimeWindow,
+    solar: TimeWindow,
+) -> TimeWindow {
     if upgrades.contains(node) {
-        TimeWindow::ALWAYS_OPEN
+        solar
     } else {
         original
     }
@@ -735,12 +773,17 @@ fn effective_window(upgrades: &UpgradeSet, node: NodeIndex, original: TimeWindow
 /// Fastest delivery time (hours) to one destination when leaving the sources at
 /// `departure`: the minimum over every source and pass-through that can reach it.
 pub fn destination_time_to_delivery(route: &Route, departure: f64, upgrades: &UpgradeSet) -> f64 {
-    let destination_window = effective_window(upgrades, route.destination, route.window);
+    let destination_window = effective_window(
+        upgrades,
+        route.destination,
+        route.window,
+        route.solar_window,
+    );
     route
         .legs
         .iter()
         .map(|leg| {
-            let pass_window = effective_window(upgrades, leg.pass_through, leg.window);
+            let pass_window = effective_window(upgrades, leg.pass_through, leg.window, leg.solar_window);
             let mut clock = departure + leg.inbound_hours;
             clock += pass_window.wait_hours(clock);
             clock += leg.outbound_hours;
@@ -1071,6 +1114,10 @@ pub enum NodeRecord {
         longitude: f64,
         open_from: i64,
         open_until: i64,
+        #[serde(default)]
+        solar_open_from: Option<i64>,
+        #[serde(default)]
+        solar_open_until: Option<i64>,
     },
     Destination {
         id: String,
@@ -1078,6 +1125,10 @@ pub enum NodeRecord {
         longitude: f64,
         open_from: i64,
         open_until: i64,
+        #[serde(default)]
+        solar_open_from: Option<i64>,
+        #[serde(default)]
+        solar_open_until: Option<i64>,
         priority: f64,
     },
 }
@@ -1108,25 +1159,63 @@ impl NodeRecord {
                 longitude,
                 open_from,
                 open_until,
-            } => Ok(Node::PassThrough {
-                id,
-                location: Coordinate::new(latitude, longitude)?,
-                window: TimeWindow::new(open_from, open_until)?,
-            }),
+                solar_open_from,
+                solar_open_until,
+            } => {
+                let window = TimeWindow::new(open_from, open_until)?;
+                Ok(Node::PassThrough {
+                    id,
+                    location: Coordinate::new(latitude, longitude)?,
+                    window,
+                    solar_window: solar_window(window, solar_open_from, solar_open_until)?,
+                })
+            }
             NodeRecord::Destination {
                 id,
                 latitude,
                 longitude,
                 open_from,
                 open_until,
+                solar_open_from,
+                solar_open_until,
                 priority,
-            } => Ok(Node::Destination {
-                id,
-                location: Coordinate::new(latitude, longitude)?,
-                window: TimeWindow::new(open_from, open_until)?,
-                priority: Priority::new(priority)?,
-            }),
+            } => {
+                let window = TimeWindow::new(open_from, open_until)?;
+                Ok(Node::Destination {
+                    id,
+                    location: Coordinate::new(latitude, longitude)?,
+                    window,
+                    solar_window: solar_window(window, solar_open_from, solar_open_until)?,
+                    priority: Priority::new(priority)?,
+                })
+            }
         }
+    }
+}
+
+/// The window a node gets with solar power: `[0, 23]` unless the file gives
+/// `solar_open_from`/`solar_open_until` (both or neither), which must contain
+/// the node's opening window.
+fn solar_window(
+    window: TimeWindow,
+    from: Option<i64>,
+    until: Option<i64>,
+) -> Result<TimeWindow, ModelError> {
+    let solar = match (from, until) {
+        (None, None) => return Ok(TimeWindow::ALWAYS_OPEN),
+        (Some(a), Some(b)) => TimeWindow::new(a, b)?,
+        (Some(a), None) => return Err(ModelError::InvalidWindow { start: a, end: -1 }),
+        (None, Some(b)) => return Err(ModelError::InvalidWindow { start: -1, end: b }),
+    };
+    if solar.contains(window) {
+        Ok(solar)
+    } else {
+        Err(ModelError::SolarWindowTooNarrow {
+            start: window.start(),
+            end: window.end(),
+            solar_start: solar.start(),
+            solar_end: solar.end(),
+        })
     }
 }
 
@@ -1179,7 +1268,7 @@ pub fn parse_graph_file(bytes: &[u8]) -> Result<ParsedInput, InputError> {
 /// Body of a successful `/api/analyze` response.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AnalyzeResponse {
-    /// Ids of the nodes to switch to `[0, 23]`.
+    /// Ids of the nodes to give solar power (they switch to their solar window).
     pub selected: Vec<String>,
     /// The requested `n` (`selected` is shorter if `n` exceeded the upgradable nodes).
     pub n: usize,

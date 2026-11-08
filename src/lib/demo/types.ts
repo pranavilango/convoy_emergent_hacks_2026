@@ -1,6 +1,7 @@
 import type { Budget } from "./budget";
 import type { WeeklyHours } from "./hours";
 import type { LocationKind, PortMode } from "./kinds";
+import type { GridPower } from "./power";
 
 export type Location = {
   id: string;
@@ -16,6 +17,9 @@ export type Location = {
   portMode: PortMode | null;
   /** Weekly working hours. Always 24/7 for ports. */
   hours: WeeklyHours;
+  /** Hours of grid power each day (the same every day); null means a reliable grid. Always null
+   *  for ports. A site takes in medicines only while it's staffed and powered (see power.ts). */
+  gridPower: GridPower;
   /** People a clinic serves (whole number, 1–100,000,000). Null for ports and warehouses, and
    *  for a clinic that hasn't been given one yet (e.g. just changed from another kind). */
   population: number | null;

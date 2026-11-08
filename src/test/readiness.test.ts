@@ -13,6 +13,7 @@ const site = (id: string, kind: Location["kind"], extra: Partial<Location> = {})
   kind,
   portMode: kind === "port" ? "sea" : null,
   hours: kind === "port" ? cloneHours(ALWAYS_OPEN) : cloneHours(DEFAULT_HOURS),
+  gridPower: kind === "port" ? null : { from: 8, until: 16 },
   population: kind === "clinic" ? 1000 : null,
   createdAt: "t",
   ...extra,

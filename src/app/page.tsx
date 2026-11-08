@@ -22,13 +22,31 @@ export const metadata: Metadata = {
   },
 };
 
-const outputs = ["Solar priority", "Panel sizing", "Battery backup", "Cold chain", "Grid gaps"];
+/** What Convoy gives you: each is shown in the demo's analysis result. */
+const outputs = [
+  [
+    "Solar priority",
+    "The sites to equip first, picked across your whole network to fit your budget.",
+  ],
+  [
+    "Grid gaps",
+    "When each site can take in medicines today, staffed and powered, and the hours solar adds.",
+  ],
+  ["Delivery waits", "The average wait for supplies before and after, weighted by people served."],
+  ["Budget curve", "What each extra solar unit buys, so you can see where funding pays off most."],
+  [
+    "Explained plans",
+    "A plain-language reason for every choice, written by Gemini from the optimizer's numbers.",
+  ],
+] as const;
 
 const inputs = [
   ["01", "Ports", "Air and sea entry points for supplies."],
   ["02", "Warehouses", "Where medicines are stored and kept cold."],
   ["03", "Clinics", "Where patients are treated, and how many people each serves."],
-  ["04", "Working hours", "When each site is staffed and needs power."],
+  ["04", "Working hours", "When each site is staffed to take in deliveries."],
+  ["05", "Grid power", "The hours each site has electricity to keep medicines cold."],
+  ["06", "Budget", "What one solar unit costs and how much money you have."],
 ] as const;
 
 const problems = [
@@ -74,6 +92,9 @@ export default function Home() {
             <a href="#how" className="transition-colors hover:text-aqua">
               How it works
             </a>
+            <a href="#results" className="transition-colors hover:text-aqua">
+              What you get
+            </a>
           </nav>
           <Link
             href="/demo"
@@ -97,7 +118,7 @@ export default function Home() {
               </span>
             </h1>
             <ul className="space-y-1 pb-6 text-lg">
-              {outputs.map((o, i) => (
+              {outputs.map(([o], i) => (
                 <li
                   key={o}
                   className="flicker-in flex w-56 items-center justify-between"
@@ -204,8 +225,9 @@ export default function Home() {
         </h2>
         <p className="mt-8 max-w-xl text-lg text-white/75">
           Map your ports, warehouses, and clinics. Convoy weighs how supplies flow between them, how
-          far they travel, and when each site needs power, then tells you which sites to equip first
-          and what to give them: panels, batteries, and backup hours.
+          far they travel, how many people each clinic serves, and when each site is staffed and has
+          power. Then it tells you which sites to equip first with the budget you have, how much
+          shorter the wait for supplies becomes, and why.
         </p>
       </section>
 
@@ -213,7 +235,7 @@ export default function Home() {
       <section id="how" className="border-t border-white/15 px-6 py-28 md:px-10">
         <div className="flex justify-between font-mono text-[11px] uppercase tracking-wider text-white/60">
           <span>_05 Map your network</span>
-          <span>4 inputs → 1 plan</span>
+          <span>6 inputs → 1 plan</span>
         </div>
         <div className="mt-12 divide-y divide-white/15 border-y border-white/15">
           {inputs.map(([n, t, d]) => (
@@ -229,6 +251,34 @@ export default function Home() {
             </div>
           ))}
         </div>
+      </section>
+
+      {/* Results */}
+      <section id="results" className="border-t border-white/15 px-6 py-28 md:px-10">
+        <div className="flex justify-between font-mono text-[11px] uppercase tracking-wider text-white/60">
+          <span>_06 What you get</span>
+          <span>1 plan → 5 answers</span>
+        </div>
+        <div className="mt-12 divide-y divide-white/15 border-y border-white/15">
+          {outputs.map(([t, d], i) => (
+            <div
+              key={t}
+              className="grid grid-cols-[3rem_1fr] items-baseline gap-4 py-6 md:grid-cols-[6rem_1fr_1fr]"
+            >
+              <span className="font-mono text-xs text-aqua">{String(i + 1).padStart(2, "0")}</span>
+              <span className="text-4xl tracking-[-0.04em] md:text-6xl">{t}</span>
+              <span className="col-start-2 text-sm text-white/70 md:col-start-auto md:text-right">
+                {d}
+              </span>
+            </div>
+          ))}
+        </div>
+        <Link
+          href="/demo"
+          className="mt-12 inline-flex items-center gap-3 rounded-sm bg-aqua px-5 py-3 text-sm font-medium text-night transition-colors hover:bg-white"
+        >
+          Try it on the Ghana sample network <span aria-hidden>↗</span>
+        </Link>
       </section>
 
       {/* Footer */}

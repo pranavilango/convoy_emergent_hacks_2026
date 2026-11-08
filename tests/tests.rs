@@ -44,6 +44,7 @@ fn pass(id: &str, lat: f64, lon: f64, a: i64, b: i64) -> Node {
         id: id.to_owned(),
         location: coord(lat, lon),
         window: win(a, b),
+        solar_window: TimeWindow::ALWAYS_OPEN,
     }
 }
 
@@ -52,6 +53,7 @@ fn dest(id: &str, lat: f64, lon: f64, a: i64, b: i64, p: f64) -> Node {
         id: id.to_owned(),
         location: coord(lat, lon),
         window: win(a, b),
+        solar_window: TimeWindow::ALWAYS_OPEN,
         priority: Priority::new(p).unwrap(),
     }
 }
@@ -1274,6 +1276,8 @@ fn node_record_into_node_for_each_kind() {
         longitude: 2.0,
         open_from: 3,
         open_until: 9,
+        solar_open_from: None,
+        solar_open_until: None,
     }
     .into_node()
     .unwrap();
@@ -1285,6 +1289,8 @@ fn node_record_into_node_for_each_kind() {
         longitude: 2.0,
         open_from: 3,
         open_until: 9,
+        solar_open_from: None,
+        solar_open_until: None,
         priority: 7.0,
     }
     .into_node()
@@ -1297,6 +1303,8 @@ fn node_record_into_node_for_each_kind() {
         longitude: 200.0,
         open_from: 3,
         open_until: 9,
+        solar_open_from: None,
+        solar_open_until: None,
         priority: 7.0,
     };
     assert_eq!(bad.into_node(), Err(ModelError::InvalidLongitude(200.0)));
@@ -1734,4 +1742,108 @@ fn server_fails_cleanly_when_port_is_taken() {
         .status()
         .unwrap();
     assert!(!status.success());
+}
+
+// ---------------------------------------------------------------------------
+// Solar windows (a site that is only staffed part of the day)
+// ---------------------------------------------------------------------------
+
+/// ZERO_CHAIN_JSON with explicit solar windows on P and D.
+fn chain_with_solar(p: (i64, i64), d: (i64, i64)) -> String {
+    ZERO_CHAIN_JSON
+        .replace(
+            "\"open_until\": 9}",
+            &format!(
+                "\"open_until\": 9, \"solar_open_from\": {}, \"solar_open_until\": {}}}",
+                p.0, p.1
+            ),
+        )
+        .replace(
+            "\"open_until\": 14,",
+            &format!(
+                "\"open_until\": 14, \"solar_open_from\": {}, \"solar_open_until\": {},",
+                d.0, d.1
+            ),
+        )
+}
+
+#[test]
+fn solar_window_defaults_to_always_open() {
+    let input = parse_graph_file(ZERO_CHAIN_JSON.as_bytes()).unwrap();
+    assert_eq!(
+        input.graph.node(ix(1)).unwrap().solar_window(),
+        Some(TimeWindow::ALWAYS_OPEN)
+    );
+    assert_eq!(
+        input.graph.node(ix(2)).unwrap().solar_window(),
+        Some(TimeWindow::ALWAYS_OPEN)
+    );
+    assert_eq!(input.graph.node(ix(0)).unwrap().solar_window(), None);
+}
+
+#[test]
+fn solar_window_is_parsed() {
+    let input = parse_graph_file(chain_with_solar((6, 17), (8, 20)).as_bytes()).unwrap();
+    assert_eq!(
+        input.graph.node(ix(1)).unwrap().solar_window(),
+        Some(win(6, 17))
+    );
+    assert_eq!(
+        input.graph.node(ix(2)).unwrap().solar_window(),
+        Some(win(8, 20))
+    );
+}
+
+#[test]
+fn solar_window_must_contain_the_opening_window() {
+    assert_eq!(
+        parse_graph_file(chain_with_solar((9, 17), (0, 23)).as_bytes()).unwrap_err(),
+        InputError::Model(ModelError::SolarWindowTooNarrow {
+            start: 8,
+            end: 9,
+            solar_start: 9,
+            solar_end: 17
+        })
+    );
+    let only_from = ZERO_CHAIN_JSON.replace(
+        "\"open_until\": 9}",
+        "\"open_until\": 9, \"solar_open_from\": 0}",
+    );
+    assert!(matches!(
+        parse_graph_file(only_from.as_bytes()).unwrap_err(),
+        InputError::Model(ModelError::InvalidWindow { .. })
+    ));
+}
+
+#[test]
+fn upgrading_switches_to_the_solar_window_not_always_open() {
+    // Solar windows equal to the opening windows: solar power changes nothing.
+    let same = parse_graph_file(chain_with_solar((8, 9), (12, 14)).as_bytes()).unwrap();
+    let both = UpgradeSet::from_indices(3, &[ix(1), ix(2)]).unwrap();
+    let none = UpgradeSet::new(3);
+    let objective = |input: &ParsedInput, set: &UpgradeSet| {
+        weighted_time_to_delivery(&input.graph, &input.departures, set)
+    };
+    assert_close(objective(&same, &none), 14.5);
+    assert_close(objective(&same, &both), 14.5);
+
+    // Default (24/7) solar windows: upgrading both removes every wait.
+    let open = parse_graph_file(ZERO_CHAIN_JSON.as_bytes()).unwrap();
+    assert_close(objective(&open, &both), 0.0);
+}
+
+#[test]
+fn solver_skips_sites_whose_solar_window_adds_nothing() {
+    // Without solar windows P is the best single upgrade (see ZERO_CHAIN_JSON notes).
+    // If P is staffed only during its current hours, solar can't help it, so D wins.
+    let input = parse_graph_file(chain_with_solar((8, 9), (0, 23)).as_bytes()).unwrap();
+    let solution = solve(
+        &input.graph,
+        &input.departures,
+        1,
+        Strategy::Auto,
+        &SolverConfig::default(),
+    )
+    .unwrap();
+    assert_eq!(solution.selected, vec![ix(2)]);
 }

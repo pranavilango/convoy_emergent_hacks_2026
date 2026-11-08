@@ -11,10 +11,12 @@ import {
 } from "@/lib/demo/hours";
 import type { LocationKind, PortMode } from "@/lib/demo/kinds";
 import { parsePopulation, populationError } from "@/lib/demo/population";
+import { DEFAULT_LIMITED_POWER, type GridPower } from "@/lib/demo/power";
 import { MAX_LOCATION_NAME_LENGTH } from "@/lib/demo/reducer";
 import { demoActions } from "@/lib/demo/store";
 
 import { Button, FieldLabel, SectionLabel, Segmented, TextInput } from "./controls";
+import { GridPowerField } from "./grid-power-field";
 import { HoursEditor } from "./hours-editor";
 import { KIND_OPTIONS, PORT_MODE_OPTIONS } from "./location-kinds";
 import { PopulationInput } from "./population-input";
@@ -31,11 +33,13 @@ export function AddLocationForm({
 }) {
   const [picked, setPicked] = useState<PickedPlace | null>(null);
   const [name, setName] = useState("");
-  // Kind, port mode, and hours are kept between additions: people tend to add several clinics
-  // in a row, and sites of one kind often share hours.
+  // Kind, port mode, hours, and grid power are kept between additions: people tend to add
+  // several clinics in a row, and sites of one kind often share hours and the same grid.
   const [kind, setKind] = useState<LocationKind>("port");
   const [portMode, setPortMode] = useState<PortMode>("sea");
   const [hours, setHours] = useState<WeeklyHours>(() => cloneHours(DEFAULT_HOURS));
+  // Convoy is for places with power cuts, so new sites start on a rationed grid.
+  const [gridPower, setGridPower] = useState<GridPower>(() => ({ ...DEFAULT_LIMITED_POWER }));
   // Population is per clinic, so it's cleared after each addition.
   const [populationText, setPopulationText] = useState("");
   const [showPopulationError, setShowPopulationError] = useState(false);
@@ -72,6 +76,7 @@ export function AddLocationForm({
       kind,
       portMode: isPort ? portMode : null,
       hours: isPort ? ALWAYS_OPEN : hours,
+      gridPower: isPort ? null : gridPower,
       population: isClinic ? parsePopulation(populationText) : null,
     });
     reset();
@@ -161,6 +166,7 @@ export function AddLocationForm({
               <HoursEditor value={hours} onChange={setHours} />
             </fieldset>
           )}
+          {!isPort && <GridPowerField value={gridPower} hours={hours} onChange={setGridPower} />}
 
           <Button type="submit" className="w-full justify-between" disabled={!!hoursProblem}>
             Add to map <span aria-hidden>↘</span>

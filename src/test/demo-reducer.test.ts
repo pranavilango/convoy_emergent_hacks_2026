@@ -52,6 +52,7 @@ const site = (kind: LocationKind, overrides: Partial<NewLocation> = {}): NewLoca
   kind,
   portMode: kind === "port" ? "sea" : null,
   hours: cloneHours(DEFAULT_HOURS),
+  gridPower: null,
   population: kind === "clinic" ? 1200 : null,
   ...overrides,
 });
