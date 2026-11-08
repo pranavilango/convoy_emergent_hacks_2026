@@ -109,32 +109,17 @@ describe("DemoApp without an API key", () => {
 describe("solar allocation analysis", () => {
   it("only enables Analyze when every location kind exists and shows the returned analysis", async () => {
     const allocation = {
-      networkSummary: "A connected supply chain.",
-      recommendations: [
-        {
-          locationId: "clinic",
-          locationName: "Mwanza Clinic",
-          kind: "clinic",
-          estimatedWaitHoursBefore: 12,
-          estimatedWaitHoursAfter: 4,
-          rationale: "It is the final care point in the network.",
-        },
-        {
-          locationId: "warehouse",
-          locationName: "Central Store",
-          kind: "warehouse",
-          estimatedWaitHoursBefore: 8,
-          estimatedWaitHoursAfter: 3,
-          rationale: "It supplies the clinic.",
-        },
-      ],
-      limitations: ["Wait times are hypothetical estimates."],
+      selected: ["clinic", "warehouse"],
+      n: 2,
+      solver: "exact",
+      baseline_weighted_hours: 21.64,
+      optimized_weighted_hours: 11.54,
     };
     const fetchMock = vi
       .fn()
       .mockResolvedValue(
         new Response(
-          JSON.stringify({ allocation, analysis: "Mwanza Clinic is the top priority." }),
+          JSON.stringify({ allocation, analysis: "These sites reduce modeled delivery times." }),
           { status: 200 },
         ),
       );
@@ -153,16 +138,25 @@ describe("solar allocation analysis", () => {
     act(() => {
       addLocation("clinic", "Mwanza Clinic");
     });
+    act(() => {
+      demoActions.setUnitCost(1);
+      demoActions.setTotalBudget(2);
+    });
+    expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "null").state.budget).toEqual({
+      unitCost: 1,
+      total: 2,
+    });
     expect(analyzeButton).toBeEnabled();
 
     fireEvent.click(analyzeButton);
     expect(await screen.findByRole("dialog", { name: "Network analysis" })).toBeInTheDocument();
-    expect(await screen.findByText("Mwanza Clinic is the top priority.")).toBeInTheDocument();
-    expect(
-      screen.getByText(/Wait times are hypothetical AI estimates, not measured outcomes/),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Estimated supply wait: 12 h before → 4 h after")).toBeInTheDocument();
-    expect(screen.getByText("Estimated supply wait: 8 h before → 3 h after")).toBeInTheDocument();
+    expect(await screen.findByText("These sites reduce modeled delivery times.")).toBeInTheDocument();
+    expect(screen.getByText(/exact solver selected 2 of 2 requested solar units/)).toBeInTheDocument();
+    expect(screen.getByText("Mwanza Clinic")).toBeInTheDocument();
+    expect(screen.getByText("Central Store")).toBeInTheDocument();
+    expect(screen.getByText(/21\.64 h before upgrades/)).toBeInTheDocument();
+    expect(screen.getByText(/11\.54 h after upgrades/)).toBeInTheDocument();
+    expect(screen.getByText("10.10 h")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledOnce();
     const sent = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(sent.network.locations.map((l: { name: string }) => l.name)).toContain("Mwanza Clinic");
@@ -171,7 +165,7 @@ describe("solar allocation analysis", () => {
       expect.objectContaining({
         name: "Mwanza Clinic",
         population: 1200,
-        hours: ["Mon–Fri 09:00–17:00", "Sat–Sun Closed"],
+        hours: expect.objectContaining({ mon: [{ open: 540, close: 1020 }], sat: [], sun: [] }),
       }),
     );
 

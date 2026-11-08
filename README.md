@@ -14,6 +14,7 @@ staffed and needs power, then says which sites to equip first and what to give t
 ## Stack
 
 - [Next.js 16](https://nextjs.org) (App Router) + React 19 + TypeScript
+- Rust `medroute` allocation service (Axum)
 - Tailwind CSS v4 (config in `src/app/globals.css`)
 - Vitest + Testing Library
 - Hosted on [Vercel](https://vercel.com)
@@ -82,8 +83,8 @@ The network is a directed graph, ready to hand to the allocation engine:
   no skipping a step). Changing a site's type removes links that no longer fit, after asking.
 - **Budget** is stored as `budget: { unitCost, total }`: what one solar power unit costs and the
   total money available, in US dollars (positive, at most two decimal places), or `null` until
-  entered. The panel shows how many whole units the budget covers. It's input for the upcoming
-  allocation engine and isn't sent to the Gemini analysis.
+  entered. The panel shows how many whole units the budget covers. That count is sent to the Rust
+  allocator as the number of sites to upgrade.
 - **Distance** isn't stored: it's the straight-line (great-circle) distance between the two ends,
   from `distanceKm()` in `geometry.ts`, so it's always in step with the locations.
 
@@ -94,7 +95,20 @@ discarded on load.
 - State: `src/lib/demo/`. `kinds.ts` defines the three kinds and the supply rule, `reducer.ts`
   enforces it, `graph.ts` has the connection helpers, `hours.ts` working hours, `population.ts`
   clinic population, `budget.ts` the solar budget, `geometry.ts` distance and marker sizing, and
-  `store.ts` handles saving. Swap `store.ts` to move to a backend.
+  `store.ts` handles saving.
+
+### Rust allocation service
+
+The Next.js route uploads a JSON graph to the Rust service using the multipart `/api/analyze`
+contract documented in [API.md](API.md). Start it in a second terminal:
+
+```sh
+cargo run --release
+```
+
+Set `MEDROUTE_API_URL` in `.env.local` when the service is not at `http://127.0.0.1:8080`.
+The backend accepts one daily opening window per site. Convoy represents each weekly schedule with
+the envelope from its earliest opening to latest closing; Gemini explains this modeling limit.
 
 ### Google Maps setup
 
@@ -109,49 +123,28 @@ Without a key the demo still loads, shows how to configure it, and lists the loc
 
 ### Solar allocation analysis
 
-On `/demo`, add at least one port, warehouse, and clinic to enable **Analyze**. The button opens a
-popup while the server makes two Gemini calls through the Google AI Studio API: the first generates
-a temporary JSON response recommending exactly two warehouses or clinics to make open 24/7, with
-estimated supply wait times before and after; the second explains those recommendations. The popup
-shows the sites, wait-time estimates, and analysis.
+On `/demo`, add at least one port, warehouse, and clinic, then set a budget that covers at least one
+solar unit to enable **Analyze**. The Next.js server sends the graph and budget-derived unit count to
+the Rust optimizer. Gemini receives the backend result and network details to explain the selection;
+it does not choose sites or generate alternative allocations. The popup shows selected sites,
+weighted delivery-time metrics, and Gemini's explanation.
 
-Wait times are hypothetical AI estimates, not measured outcomes. The demo does not collect supply
-wait-time records, staffing, demand, or operating costs, so validate recommendations against real
-planning data before acting on them.
+The weighted times are model estimates, not measured outcomes. The optimizer uses coordinates for
+transit time, opening windows for waiting time, and clinic population as a weight. The Rust API only
+accepts one daily window per site, so Convoy represents each weekly schedule with the envelope from
+earliest opening to latest closing. Validate the model against real operations data before acting on
+its recommendations.
 
-The server-side endpoint accepts the current network:
+The Next.js route accepts a positive integer `n` and a `network` containing site coordinates,
+weekly hours, clinic population, and directed connections. It converts these into the Rust graph
+format and uploads a JSON `file` to `POST /api/analyze?n=<n>&strategy=auto`; see [API.md](API.md)
+for the backend contract. The response has `selected`, `n`, `solver`, `baseline_weighted_hours`, and
+`optimized_weighted_hours`; the API route returns that allocation with Gemini's `analysis`.
 
-```http
-POST /api/solar-allocation
-Content-Type: application/json
-
-{
-  "network": {
-    "locations": [
-      {
-        "id": "clinic-1",
-        "name": "Clinic A",
-        "kind": "clinic",
-        "portMode": null,
-        "population": 12400,
-        "hours": ["Mon–Fri 08:00–16:00", "Sat–Sun Closed"]
-      }
-    ],
-    "connections": [{ "fromId": "warehouse-1", "toId": "clinic-1", "distanceKm": 118 }]
-  }
-}
-```
-
-`population`, `hours` (a readable weekly summary), and `distanceKm` are optional; the demo sends
-them so Gemini can favour sites that aren't already open 24/7, clinics serving more people, and
-long supply links. The response contains the generated `allocation` JSON and its `analysis`. The allocation has a
-`recommendations` array with exactly two entries, each including a `locationId`, `locationName`,
-`kind` (`warehouse` or `clinic`), `estimatedWaitHoursBefore`, `estimatedWaitHoursAfter`, and
-`rationale`. Wait-time values are hours. Set `GEMINI_API_KEY` in
-`.env.local` for local development and in the Vercel project environment for deployment. The key
-must not use a `NEXT_PUBLIC_` prefix. Both calls default to `gemini-3.5-flash-lite`; set
-`GEMINI_MODEL` if your AI Studio project uses a different available model. Network details are sent
-to Google's Gemini API for generation and analysis.
+Set `GEMINI_API_KEY` and `MEDROUTE_API_URL` in `.env.local` for local development and in the
+production environment. `MEDROUTE_API_URL` must point to a deployed Rust service; the local default
+`http://127.0.0.1:8080` only works on the same machine as Next.js. `GEMINI_MODEL` defaults to
+`gemini-3.5-flash-lite`.
 
 ### Map style
 
@@ -163,6 +156,9 @@ look is used instead.
 ## Deploying
 
 Import the repository in Vercel. It detects Next.js automatically. Add
-`NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` and `NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID` under Project → Settings →
-Environment Variables, and add the Vercel domains to the key's referrer restrictions. Pushes to
-`main` deploy to production, and other branches get preview URLs.
+`NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` and `NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID` under Project Settings, and
+add the Vercel domains to the key's referrer restrictions. Deploy the Rust medroute service
+separately on a host reachable by the Vercel application and set `MEDROUTE_API_URL` to that
+service's URL; the localhost default will not work in Vercel. Also set `GEMINI_API_KEY` (and
+optionally `GEMINI_MODEL`) in Vercel's server-side environment variables. Pushes to `main` deploy to
+production, and other branches get preview URLs.

@@ -5,9 +5,8 @@ import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { ConvoyMark } from "@/components/convoy-mark";
-import { distanceKm } from "@/lib/demo/geometry";
 import { findConnection, outgoing } from "@/lib/demo/graph";
-import { summarizeHours } from "@/lib/demo/hours";
+import { unitsAffordable } from "@/lib/demo/budget";
 import { canSupply, KIND_INFO, LOCATION_KINDS, SUPPLIES } from "@/lib/demo/kinds";
 import { demoActions, useDemoState } from "@/lib/demo/store";
 import type { Location } from "@/lib/demo/types";
@@ -51,6 +50,7 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
   const hasRequiredLocationKinds = (["port", "warehouse", "clinic"] as const).every((kind) =>
     locations.some((location) => location.kind === kind),
   );
+  const affordableSolarUnits = unitsAffordable(budget);
 
   useEffect(() => {
     if (!apiKey) return;
@@ -123,27 +123,28 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
     setAnalysisError(null);
 
     try {
+      const solarUnits = affordableSolarUnits;
+      if (solarUnits === null || solarUnits < 1 || !Number.isSafeInteger(solarUnits)) {
+        throw new Error("Enter a budget that covers at least one solar unit before analyzing.");
+      }
+
       const response = await fetch("/api/solar-allocation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          n: solarUnits,
           network: {
-            locations: locations.map(({ id, name, kind, portMode, population, hours }) => ({
+            locations: locations.map(({ id, name, kind, lat, lng, population, hours }) => ({
               id,
               name,
               kind,
-              portMode,
+              lat,
+              lng,
               population,
-              // A readable weekly summary, e.g. ["Mon–Fri 09:00–17:00", "Sat–Sun Closed"].
-              hours: kind === "port" ? ["Every day 24 hours"] : summarizeHours(hours),
+              // The Rust API mapping derives a single daily window from these weekly hours.
+              hours,
             })),
-            connections: connections.flatMap(({ fromId, toId }) => {
-              const from = locations.find((l) => l.id === fromId);
-              const to = locations.find((l) => l.id === toId);
-              if (!from || !to) return [];
-              const km = Math.round(distanceKm(from, to) * 10) / 10;
-              return [{ fromId, toId, distanceKm: km }];
-            }),
+            connections: connections.map(({ fromId, toId }) => ({ fromId, toId })),
           },
         }),
       });
@@ -213,12 +214,18 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
           <SectionLabel index="06">Analysis</SectionLabel>
         </h2>
         <p className="text-sm leading-relaxed opacity-75">
-          Get two suggested 24/7 warehouses or clinics with estimated supply wait times before and
-          after, then analyze the results.
+          Use the available solar units to optimize which warehouses and clinics should operate
+          24/7, then review the selected sites and delivery-time metrics.
         </p>
         <Button
           onClick={analyzeNetwork}
-          disabled={!hasRequiredLocationKinds || analysisStatus === "loading"}
+          disabled={
+            !hasRequiredLocationKinds ||
+            affordableSolarUnits === null ||
+            affordableSolarUnits < 1 ||
+            !Number.isSafeInteger(affordableSolarUnits) ||
+            analysisStatus === "loading"
+          }
           aria-busy={analysisStatus === "loading"}
           className="w-full"
         >
@@ -229,6 +236,11 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
             Add at least one port, warehouse, and clinic to enable analysis.
           </p>
         )}
+        {affordableSolarUnits === null ? (
+          <p className="text-xs opacity-70">Enter the solar unit cost and total budget to analyze.</p>
+        ) : affordableSolarUnits < 1 ? (
+          <p className="text-xs opacity-70">The budget must cover at least one solar unit.</p>
+        ) : null}
       </section>
     </div>
   );
@@ -285,6 +297,7 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
         <AllocationAnalysisDialog
           status={analysisStatus}
           result={analysisResult}
+          locations={locations}
           error={analysisError}
           onClose={() => {
             if (analysisStatus !== "loading") setAnalysisStatus("idle");
@@ -317,36 +330,19 @@ function isAllocationAnalysisResult(value: unknown): value is AllocationAnalysis
 
   const allocation = value.allocation;
   return (
-    "networkSummary" in allocation &&
-    typeof allocation.networkSummary === "string" &&
-    "recommendations" in allocation &&
-    Array.isArray(allocation.recommendations) &&
-    allocation.recommendations.length === 2 &&
-    allocation.recommendations.every(
-      (recommendation) =>
-        typeof recommendation === "object" &&
-        recommendation !== null &&
-        "locationId" in recommendation &&
-        typeof recommendation.locationId === "string" &&
-        "locationName" in recommendation &&
-        typeof recommendation.locationName === "string" &&
-        "kind" in recommendation &&
-        (recommendation.kind === "warehouse" || recommendation.kind === "clinic") &&
-        "estimatedWaitHoursBefore" in recommendation &&
-        typeof recommendation.estimatedWaitHoursBefore === "number" &&
-        Number.isFinite(recommendation.estimatedWaitHoursBefore) &&
-        recommendation.estimatedWaitHoursBefore >= 0 &&
-        "estimatedWaitHoursAfter" in recommendation &&
-        typeof recommendation.estimatedWaitHoursAfter === "number" &&
-        Number.isFinite(recommendation.estimatedWaitHoursAfter) &&
-        recommendation.estimatedWaitHoursAfter >= 0 &&
-        recommendation.estimatedWaitHoursAfter < recommendation.estimatedWaitHoursBefore &&
-        "rationale" in recommendation &&
-        typeof recommendation.rationale === "string",
-    ) &&
-    "limitations" in allocation &&
-    Array.isArray(allocation.limitations) &&
-    allocation.limitations.every((limitation) => typeof limitation === "string")
+    "selected" in allocation &&
+    Array.isArray(allocation.selected) &&
+    allocation.selected.every((id) => typeof id === "string") &&
+    "n" in allocation &&
+    Number.isSafeInteger(allocation.n) &&
+    "solver" in allocation &&
+    (allocation.solver === "exact" || allocation.solver === "greedy") &&
+    "baseline_weighted_hours" in allocation &&
+    typeof allocation.baseline_weighted_hours === "number" &&
+    Number.isFinite(allocation.baseline_weighted_hours) &&
+    "optimized_weighted_hours" in allocation &&
+    typeof allocation.optimized_weighted_hours === "number" &&
+    Number.isFinite(allocation.optimized_weighted_hours)
   );
 }
 

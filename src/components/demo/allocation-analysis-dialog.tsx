@@ -2,6 +2,7 @@
 
 import type { KeyboardEvent } from "react";
 
+import type { Location } from "@/lib/demo/types";
 import type { SolarAllocation } from "@/lib/solar-allocation/analyze";
 import { AnalysisText } from "./analysis-text";
 import { Button } from "./controls";
@@ -14,11 +15,13 @@ export type AllocationAnalysisResult = {
 export function AllocationAnalysisDialog({
   status,
   result,
+  locations,
   error,
   onClose,
 }: {
   status: "loading" | "ready" | "error";
   result: AllocationAnalysisResult | null;
+  locations: Location[];
   error: string | null;
   onClose: () => void;
 }) {
@@ -46,7 +49,7 @@ export function AllocationAnalysisDialog({
         <div className="flex items-start justify-between gap-6 border-b border-foreground/30 pb-5">
           <div>
             <p className="font-mono text-[11px] uppercase tracking-wider opacity-70">
-              _Temporary AI allocation
+              _Rust optimizer + Gemini explanation
             </p>
             <h2
               id="allocation-dialog-title"
@@ -69,8 +72,7 @@ export function AllocationAnalysisDialog({
 
         {status === "loading" && (
           <p role="status" className="py-8 text-sm">
-            Generating two 24/7 site recommendations with estimated wait times, then analyzing their
-            JSON output…
+            Optimizing the network and explaining the result…
           </p>
         )}
 
@@ -78,65 +80,81 @@ export function AllocationAnalysisDialog({
           <div role="alert" className="py-8">
             <p className="text-sm">{error}</p>
             <p className="mt-3 text-xs opacity-70">
-              Check the server configuration and try Analyze again.
+              {error?.includes("Rust allocation service") ? (
+                <>
+                  Start the Rust service with <code>cargo run --release</code>, then try Analyze
+                  again.
+                </>
+              ) : error?.includes("Gemini") ? (
+                "Check GEMINI_API_KEY and server network access, then try Analyze again."
+              ) : (
+                "Check the server configuration and try Analyze again."
+              )}
             </p>
           </div>
         )}
 
         {status === "ready" && result && (
           <div className="space-y-7 py-6">
-            <AnalysisText text={result.analysis} />
+            <section aria-labelledby="allocation-impact-title">
+              <h3
+                id="allocation-impact-title"
+                className="font-mono text-[11px] uppercase tracking-wider opacity-70"
+              >
+                _Weighted delivery-time reduction
+              </h3>
+              <p className="mt-3 font-mono text-3xl tracking-tight">
+                {(
+                  result.allocation.baseline_weighted_hours -
+                  result.allocation.optimized_weighted_hours
+                ).toFixed(2)}{" "}
+                h
+              </p>
+              <p className="mt-2 text-sm leading-relaxed opacity-75">
+                {result.allocation.baseline_weighted_hours.toFixed(2)} h before upgrades →{" "}
+                {result.allocation.optimized_weighted_hours.toFixed(2)} h after upgrades
+              </p>
+            </section>
 
             <section aria-labelledby="allocation-recommendations-title">
               <h3
                 id="allocation-recommendations-title"
                 className="font-mono text-[11px] uppercase tracking-wider opacity-70"
               >
-                _Recommended 24/7 sites
+                _Selected 24/7 sites
               </h3>
-              <p className="mt-2 text-sm leading-relaxed">{result.allocation.networkSummary}</p>
+              <p className="mt-2 text-sm leading-relaxed">
+                The {result.allocation.solver} solver selected {result.allocation.selected.length}{" "}
+                of {result.allocation.n} requested solar units.
+              </p>
               <ol className="mt-4 divide-y divide-foreground/20 border-y border-foreground/20">
-                {result.allocation.recommendations.map((recommendation) => (
-                  <li key={recommendation.locationId} className="py-4">
-                    <div className="flex items-baseline gap-3">
-                      <span className="font-medium">{recommendation.locationName}</span>
-                      <span className="ml-auto font-mono text-[10px] uppercase tracking-wider opacity-60">
-                        {recommendation.kind} · 24/7
-                      </span>
-                    </div>
-                    <p className="mt-2 font-mono text-xs">
-                      Estimated supply wait: {recommendation.estimatedWaitHoursBefore} h before
-                      {" → "}
-                      {recommendation.estimatedWaitHoursAfter} h after
-                    </p>
-                    <p className="mt-1 text-sm leading-relaxed opacity-80">
-                      {recommendation.rationale}
-                    </p>
-                  </li>
-                ))}
+                {result.allocation.selected.map((id) => {
+                  const location = locations.find((item) => item.id === id);
+                  return (
+                    <li key={id} className="py-4">
+                      <div className="flex items-baseline gap-3">
+                        <span className="font-medium">{location?.name ?? id}</span>
+                        <span className="ml-auto font-mono text-[10px] uppercase tracking-wider opacity-60">
+                          {location?.kind ?? "site"} · 24/7
+                        </span>
+                      </div>
+                    </li>
+                  );
+                })}
               </ol>
             </section>
 
-            {result.allocation.limitations.length > 0 && (
-              <section aria-labelledby="allocation-limitations-title">
-                <h3
-                  id="allocation-limitations-title"
-                  className="font-mono text-[11px] uppercase tracking-wider opacity-70"
-                >
-                  _Limitations
-                </h3>
-                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-relaxed">
-                  {result.allocation.limitations.map((limitation) => (
-                    <li key={limitation}>{limitation}</li>
-                  ))}
-                </ul>
-              </section>
-            )}
-
-            <p className="border-t border-foreground/30 pt-4 text-xs leading-relaxed opacity-70">
-              Wait times are hypothetical AI estimates, not measured outcomes. Validate them with
-              actual supply records, staffing, demand, and operating costs before making changes.
-            </p>
+            <section aria-labelledby="allocation-explanation-title">
+              <h3
+                id="allocation-explanation-title"
+                className="font-mono text-[11px] uppercase tracking-wider opacity-70"
+              >
+                _Why these sites
+              </h3>
+              <div className="mt-3">
+                <AnalysisText text={result.analysis} />
+              </div>
+            </section>
           </div>
         )}
       </section>

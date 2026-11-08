@@ -1,55 +1,64 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { POST } from "@/app/api/solar-allocation/route";
-import { analyzeSolarAllocation, type SolarAllocation } from "@/lib/solar-allocation/analyze";
+import {
+  analyzeSolarAllocation,
+  type SolarAllocation,
+  type SolarAllocationNetwork,
+} from "@/lib/solar-allocation/analyze";
 
-const originalApiKey = process.env["GEMINI_API_KEY"];
-const originalModel = process.env["GEMINI_MODEL"];
+const savedEnv = {
+  apiKey: process.env["GEMINI_API_KEY"],
+  model: process.env["GEMINI_MODEL"],
+  backend: process.env["MEDROUTE_API_URL"],
+};
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
-
-  if (originalApiKey === undefined) {
-    delete process.env["GEMINI_API_KEY"];
-  } else {
-    process.env["GEMINI_API_KEY"] = originalApiKey;
-  }
-
-  if (originalModel === undefined) {
-    delete process.env["GEMINI_MODEL"];
-  } else {
-    process.env["GEMINI_MODEL"] = originalModel;
-  }
+  restoreEnv("GEMINI_API_KEY", savedEnv.apiKey);
+  restoreEnv("GEMINI_MODEL", savedEnv.model);
+  restoreEnv("MEDROUTE_API_URL", savedEnv.backend);
 });
 
 const allocation: SolarAllocation = {
-  networkSummary: "Two care sites are recommended for extended hours.",
-  recommendations: [
-    {
-      locationId: "clinic-1",
-      locationName: "Clinic A",
-      kind: "clinic",
-      estimatedWaitHoursBefore: 12,
-      estimatedWaitHoursAfter: 4,
-      rationale: "It is the endpoint providing patient care.",
-    },
-    {
-      locationId: "warehouse-1",
-      locationName: "Central Store",
-      kind: "warehouse",
-      estimatedWaitHoursBefore: 8,
-      estimatedWaitHoursAfter: 2,
-      rationale: "It supplies the clinic.",
-    },
-  ],
-  limitations: ["Wait times are hypothetical estimates, not measured data."],
+  selected: ["warehouse-1", "clinic-1"],
+  n: 2,
+  solver: "exact",
+  baseline_weighted_hours: 21.64,
+  optimized_weighted_hours: 11.54,
 };
 
-const network = {
+const dailyHours = {
+  mon: [{ open: 540, close: 1020 }],
+  tue: [{ open: 540, close: 1020 }],
+  wed: [{ open: 540, close: 1020 }],
+  thu: [{ open: 540, close: 1020 }],
+  fri: [{ open: 540, close: 1020 }],
+  sat: [],
+  sun: [],
+};
+
+const network: SolarAllocationNetwork = {
   locations: [
-    { id: "port-1", name: "Dar Port", kind: "port", portMode: "sea" },
-    { id: "warehouse-1", name: "Central Store", kind: "warehouse", portMode: null },
-    { id: "clinic-1", name: "Clinic A", kind: "clinic", portMode: null },
+    { id: "port-1", name: "Dar Port", kind: "port", lat: -6.8, lng: 39.3, hours: dailyHours },
+    {
+      id: "warehouse-1",
+      name: "Central Store",
+      kind: "warehouse",
+      lat: -3.4,
+      lng: 36.7,
+      population: null,
+      hours: dailyHours,
+    },
+    {
+      id: "clinic-1",
+      name: "Clinic A",
+      kind: "clinic",
+      lat: -2.5,
+      lng: 32.9,
+      population: 12_400,
+      hours: dailyHours,
+    },
   ],
   connections: [
     { fromId: "port-1", toId: "warehouse-1" },
@@ -58,7 +67,7 @@ const network = {
 };
 
 describe("solar allocation analysis", () => {
-  it("sends the allocation to Gemini and returns its analysis", async () => {
+  it("sends the backend JSON result to Gemini", async () => {
     process.env["GEMINI_API_KEY"] = "test-api-key";
     process.env["GEMINI_MODEL"] = "gemini-test-model";
     const fetchMock = vi.fn().mockResolvedValue(
@@ -71,50 +80,34 @@ describe("solar allocation analysis", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(analyzeSolarAllocation(allocation)).resolves.toBe(
+    await expect(analyzeSolarAllocation(network, allocation)).resolves.toBe(
       "Prioritize the clinic allocation.",
     );
 
     expect(fetchMock).toHaveBeenCalledOnce();
     const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toContain("/models/gemini-test-model:generateContent");
-    expect(url).not.toContain("test-api-key");
     expect(new Headers(options.headers).get("x-goog-api-key")).toBe("test-api-key");
+    expect(String(options.body)).toContain("baseline_weighted_hours");
+    expect(String(options.body)).toContain("21.64");
+    expect(String(options.body).toLowerCase()).toContain("do not solve the optimization again");
+    expect(String(options.body)).toContain("Do not mention the solver");
     expect(String(options.body)).toContain("Clinic A");
+    expect(String(options.body)).toContain("12400");
   });
 
-  it("rejects requests without a valid network", async () => {
-    const response = await POST(
-      new Request("http://localhost/api/solar-allocation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ network: { locations: [], connections: "invalid" } }),
-      }),
-    );
-
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "Request body must include a valid network with locations and connections.",
-    });
-  });
-
-  it("uses Gemini twice: first to generate 24/7 recommendations, then to analyze their JSON", async () => {
+  it("returns the Rust allocation with Gemini's explanation", async () => {
     process.env["GEMINI_API_KEY"] = "test-api-key";
-    process.env["GEMINI_MODEL"] = "gemini-test-model";
+    process.env["MEDROUTE_API_URL"] = "http://medroute.test/";
     const fetchMock = vi
       .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(allocation), { status: 200 }))
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [{ content: { parts: [{ text: JSON.stringify(allocation) }] } }],
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            candidates: [{ content: { parts: [{ text: "Clinic A is the top priority." }] } }],
+            candidates: [
+              { content: { parts: [{ text: "The selected sites reduce weighted waits." }] } },
+            ],
           }),
           { status: 200 },
         ),
@@ -125,145 +118,89 @@ describe("solar allocation analysis", () => {
       new Request("http://localhost/api/solar-allocation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ network }),
+        body: JSON.stringify({ network, n: 2 }),
       }),
     );
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       allocation,
-      analysis: "Clinic A is the top priority.",
+      analysis: "The selected sites reduce weighted waits.",
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(String(fetchMock.mock.calls[0]?.[1]?.body)).toContain("exactly two recommendations");
-    expect(String(fetchMock.mock.calls[0]?.[1]?.body)).toContain("estimatedWaitHoursBefore");
-    expect(String(fetchMock.mock.calls[1]?.[1]?.body)).toContain("networkSummary");
-    expect(String(fetchMock.mock.calls[1]?.[1]?.body)).toContain("hypothetical");
-    expect(String(fetchMock.mock.calls[1]?.[1]?.body)).toContain("estimatedWaitHoursAfter");
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://medroute.test/api/analyze?n=2&strategy=auto");
+    expect(options.method).toBe("POST");
+    expect(options.body).toBeInstanceOf(FormData);
+    const uploaded = (options.body as FormData).get("file");
+    expect(uploaded).toBeInstanceOf(Blob);
+    const graph = JSON.parse(await (uploaded as Blob).text()) as {
+      nodes: Array<Record<string, unknown>>;
+      edges: Array<Record<string, unknown>>;
+    };
+    expect(graph.nodes[0]).toEqual({
+      id: "port-1",
+      latitude: -6.8,
+      longitude: 39.3,
+      kind: "source",
+    });
+    expect(graph.nodes[1]).toMatchObject({
+      kind: "pass_through",
+      open_from: 9,
+      open_until: 16,
+    });
+    expect(graph.nodes[2]).toMatchObject({ kind: "destination", priority: 12_400 });
+    expect(graph.edges).toEqual([
+      { from: "port-1", to: "warehouse-1" },
+      { from: "warehouse-1", to: "clinic-1" },
+    ]);
   });
 
-  it("passes hours, clinic population, and link distances on to Gemini", async () => {
-    process.env["GEMINI_API_KEY"] = "test-api-key";
+  it("reports missing Gemini configuration instead of returning an unexplained allocation", async () => {
+    delete process.env["GEMINI_API_KEY"];
+    process.env["MEDROUTE_API_URL"] = "http://medroute.test/";
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            candidates: [{ content: { parts: [{ text: JSON.stringify(allocation) }] } }],
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "OK" }] } }] }), {
-          status: 200,
-        }),
-      );
+      .mockResolvedValue(new Response(JSON.stringify(allocation), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
-    const detailed = {
-      locations: [
-        { ...network.locations[0], population: null, hours: ["Every day 24 hours"] },
-        {
-          ...network.locations[1],
-          population: null,
-          hours: ["Mon–Fri 09:00–17:00", "Sat–Sun Closed"],
-        },
-        { ...network.locations[2], population: 12_400, hours: ["Every day 08:00–16:00"] },
-      ],
-      connections: [
-        { ...network.connections[0], distanceKm: 42.5 },
-        { ...network.connections[1], distanceKm: 118 },
-      ],
-    };
 
     const response = await POST(
       new Request("http://localhost/api/solar-allocation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ network: detailed }),
-      }),
-    );
-
-    expect(response.status).toBe(200);
-    const prompt = String(fetchMock.mock.calls[0]?.[1]?.body);
-    expect(prompt).toContain("prefer sites that are not already open 24/7");
-    for (const detail of ["12400", "Sat–Sun Closed", "42.5", "118"]) {
-      expect(prompt).toContain(detail);
-    }
-  });
-
-  it("rejects malformed optional details", async () => {
-    for (const bad of [
-      { locations: [{ ...network.locations[2], population: -1 }], connections: [] },
-      { locations: [{ ...network.locations[2], hours: "9-5" }], connections: [] },
-      { locations: [], connections: [{ ...network.connections[0], distanceKm: "far" }] },
-    ]) {
-      const response = await POST(
-        new Request("http://localhost/api/solar-allocation", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ network: bad }),
-        }),
-      );
-      expect(response.status).toBe(400);
-    }
-  });
-
-  it("rejects generated recommendations for ports or with invalid wait-time changes", async () => {
-    process.env["GEMINI_API_KEY"] = "test-api-key";
-    const invalidAllocation = {
-      ...allocation,
-      recommendations: [
-        {
-          ...allocation.recommendations[0],
-          locationId: "port-1",
-          locationName: "Dar Port",
-          kind: "port",
-        },
-        allocation.recommendations[1],
-      ],
-    };
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(invalidAllocation) }] } }],
-        }),
-        { status: 200 },
-      ),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    vi.spyOn(console, "error").mockImplementation(() => {});
-
-    const response = await POST(
-      new Request("http://localhost/api/solar-allocation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ network }),
-      }),
-    );
-
-    expect(response.status).toBe(502);
-    expect(fetchMock).toHaveBeenCalledOnce();
-    await expect(response.json()).resolves.toEqual({
-      error: "Unable to analyze the solar allocation right now.",
-    });
-  });
-
-  it("reports missing server credentials without exposing provider details", async () => {
-    delete process.env["GEMINI_API_KEY"];
-    vi.spyOn(console, "error").mockImplementation(() => {});
-
-    const response = await POST(
-      new Request("http://localhost/api/solar-allocation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ network }),
+        body: JSON.stringify({ network, n: 2 }),
       }),
     );
 
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toEqual({
-      error: "Gemini analysis is not configured on the server.",
+      error: "Gemini explanation is not configured on the server.",
     });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("rejects requests without a valid graph or solar-unit count", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/solar-allocation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ network: { locations: [], connections: "invalid" }, n: 2 }),
+      }),
+    );
+    expect(response.status).toBe(400);
+
+    const missingUnits = await POST(
+      new Request("http://localhost/api/solar-allocation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ network, n: 0 }),
+      }),
+    );
+    expect(missingUnits.status).toBe(400);
   });
 });
+
+function restoreEnv(key: string, value: string | undefined) {
+  if (value === undefined) delete process.env[key];
+  else process.env[key] = value;
+}
