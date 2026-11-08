@@ -105,6 +105,8 @@ describe("solar allocation analysis", () => {
     expect(prompt).toContain("21.6"); // weighted hours before, rounded
     expect(prompt).toMatch(/Central Store[^}]*km/);
     // Guardrails: explain, don't re-decide; no ids or method talk.
+    expect(prompt).toContain("at most 12 words per bullet");
+    expect(prompt).toContain("do not bold the label before the colon");
     expect(prompt).toContain("Do not suggest or compare other allocations");
     expect(prompt).toContain("Never mention ids, algorithms, solvers");
     expect(prompt).not.toContain("warehouse-1");

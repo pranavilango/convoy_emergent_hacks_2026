@@ -4,7 +4,7 @@ import type { KeyboardEvent, ReactNode } from "react";
 
 import { distanceKm, formatDistance } from "@/lib/demo/geometry";
 import { kindLabel } from "@/lib/demo/kinds";
-import { peopleLabel } from "@/lib/demo/population";
+import { formatPeopleHours, peopleLabel, totalClinicPopulation } from "@/lib/demo/population";
 import {
   describeStaffing,
   formatPower,
@@ -141,15 +141,13 @@ function AnalysisResult({
   locations: Location[];
   connections: Connection[];
 }) {
-  const { allocation, steps, analysis } = result;
+  const { allocation, analysis } = result;
   const byId = new Map(locations.map((l) => [l.id, l]));
   const saved = allocation.baseline_weighted_hours - allocation.optimized_weighted_hours;
+  const clinicPopulation = totalClinicPopulation(locations);
+  const peopleHoursSaved = saved * clinicPopulation;
   const share =
     allocation.baseline_weighted_hours > 0 ? saved / allocation.baseline_weighted_hours : 0;
-  const maxSaved = Math.max(
-    saved,
-    ...steps.map((s) => allocation.baseline_weighted_hours - s.weighted_hours),
-  );
   const coversEverySite =
     allocation.selected.length < allocation.n &&
     allocation.selected.length === locations.filter((l) => l.kind !== "port").length;
@@ -157,22 +155,50 @@ function AnalysisResult({
   return (
     <div className="space-y-8 py-6">
       <section aria-labelledby="allocation-impact-title" className="space-y-2">
-        <Heading id="allocation-impact-title">_Average wait for supplies</Heading>
-        <p className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-          <span className="text-5xl tracking-[-0.04em] text-aqua">−{hours(saved)}</span>
-          <span className="font-mono text-sm text-white/70">
-            {hours(allocation.baseline_weighted_hours)} →{" "}
-            {hours(allocation.optimized_weighted_hours)}
+        <Heading id="allocation-impact-title">_Estimated impact</Heading>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="border border-white/15 p-4">
+            <p className="font-mono text-[11px] uppercase tracking-wider text-white/60">
+              People affected
+            </p>
+            <p className="mt-1 text-3xl font-semibold tracking-tight text-aqua">
+              {peopleLabel(clinicPopulation)}
+            </p>
+            <p className="mt-1 text-xs text-white/60">Across all clinic populations</p>
+          </div>
+          <div className="border border-white/15 p-4">
+            <p className="font-mono text-[11px] uppercase tracking-wider text-white/60">
+              Hours saved per person
+            </p>
+            <p className="mt-1 text-3xl font-semibold tracking-tight text-aqua">{hours(saved)}</p>
+            <p className="mt-1 text-xs text-white/60">
+              Estimated average supply arrival time saved
+            </p>
+          </div>
+        </div>
+        <p className="text-sm text-white/70">
+          Combined estimate:{" "}
+          <span className="font-semibold text-aqua">{formatPeopleHours(peopleHoursSaved)}</span>
+          <span className="font-semibold text-aqua">
+            {` · ${hours(allocation.baseline_weighted_hours)} → ${hours(allocation.optimized_weighted_hours)} per person`}
             {share > 0 && ` · ${Math.round(share * 100)}% shorter`}
           </span>
         </p>
-        <p className="text-sm text-white/60">
-          Weighted by the people each clinic serves. With {allocation.selected.length} solar{" "}
-          {allocation.selected.length === 1 ? "unit" : "units"}, these sites take in medicines
-          whenever they&apos;re staffed, not only when the grid is on.
-          {coversEverySite &&
-            ` Your budget covers every warehouse and clinic, so all ${allocation.selected.length} are included.`}
-        </p>
+        <ul className="list-disc space-y-1 pl-5 text-sm text-white/60">
+          <li>
+            Model: population-weighted, averages departure times. Solar removes the grid-power
+            limit, while staffing hours still apply.
+          </li>
+          {coversEverySite && (
+            <li>
+              Budget covers all{" "}
+              <strong className="font-semibold text-aqua">
+                {allocation.selected.length} eligible sites
+              </strong>
+              .
+            </li>
+          )}
+        </ul>
       </section>
 
       <section aria-labelledby="allocation-sites-title" className="space-y-3">
@@ -233,40 +259,6 @@ function AnalysisResult({
           })}
         </ol>
       </section>
-
-      {steps.length > 1 && (
-        <section aria-labelledby="allocation-steps-title" className="space-y-3">
-          <Heading id="allocation-steps-title">_What each solar unit buys</Heading>
-          <ol className="space-y-3">
-            {steps.map((step) => {
-              const stepSaved = allocation.baseline_weighted_hours - step.weighted_hours;
-              return (
-                <li key={step.units} className="space-y-1">
-                  <div className="flex items-baseline justify-between gap-3 text-sm">
-                    <span className="min-w-0">
-                      <span className="font-mono text-xs text-aqua">
-                        {step.units} {step.units === 1 ? "unit" : "units"}
-                      </span>{" "}
-                      <span className="text-white/75">
-                        {step.selected.map((id) => byId.get(id)?.name ?? "Site").join(", ")}
-                      </span>
-                    </span>
-                    <span className="shrink-0 font-mono text-xs text-white/70">
-                      {hours(step.weighted_hours)}
-                    </span>
-                  </div>
-                  <div className="h-1.5 rounded-sm bg-white/10" aria-hidden>
-                    <div
-                      className="h-full rounded-sm bg-aqua"
-                      style={{ width: `${maxSaved > 0 ? (stepSaved / maxSaved) * 100 : 0}%` }}
-                    />
-                  </div>
-                </li>
-              );
-            })}
-          </ol>
-        </section>
-      )}
 
       <section aria-labelledby="allocation-explanation-title" className="space-y-3">
         <Heading id="allocation-explanation-title">_Why these sites</Heading>

@@ -9,6 +9,7 @@ import { findConnection, outgoing } from "@/lib/demo/graph";
 import { unitsAffordable } from "@/lib/demo/budget";
 import { createSampleNetwork } from "@/lib/demo/sample-network";
 import { canSupply, KIND_INFO, LOCATION_KINDS, SUPPLIES } from "@/lib/demo/kinds";
+import { formatPeopleHours, totalClinicPopulation } from "@/lib/demo/population";
 import { demoActions, useDemoState } from "@/lib/demo/store";
 import type { Location } from "@/lib/demo/types";
 import { analysisIssues } from "@/lib/solar-allocation/readiness";
@@ -289,10 +290,11 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
           <div className="flex items-center justify-between gap-3 border-y border-foreground/20 py-3 text-sm">
             <span className={resultIsCurrent ? "" : "text-white/50"}>
               {resultIsCurrent
-                ? `Last result: ${analysisResult.allocation.selected.length} sites lit on the map, −${(
-                    analysisResult.allocation.baseline_weighted_hours -
-                    analysisResult.allocation.optimized_weighted_hours
-                  ).toFixed(1)} h`
+                ? `Last result: ${analysisResult.allocation.selected.length} sites lit on the map, ${formatPeopleHours(
+                    (analysisResult.allocation.baseline_weighted_hours -
+                      analysisResult.allocation.optimized_weighted_hours) *
+                      totalClinicPopulation(locations),
+                  )} saved`
                 : "Out of date: the network changed since the last analysis."}
             </span>
             <Button
@@ -350,15 +352,15 @@ export function DemoApp({ apiKey, mapId }: { apiKey?: string; mapId?: string }) 
   );
 
   const layout = (
-    <div className="theme-night flex min-h-dvh flex-col bg-background font-display text-foreground md:h-dvh">
+    <div className="theme-night flex min-h-dvh flex-col bg-background font-display text-foreground md:h-dvh md:overflow-hidden">
       <DemoHeader count={locations.length} connectionCount={connections.length} />
-      <div className="flex flex-1 flex-col md:grid md:min-h-0 md:grid-cols-[minmax(22rem,26rem)_1fr]">
-        <section aria-label="Map" className="order-1 h-[55vh] md:order-2 md:h-auto">
+      <div className="flex flex-1 flex-col md:grid md:min-h-0 md:grid-cols-[minmax(22rem,26rem)_1fr] md:grid-rows-[minmax(0,1fr)] md:overflow-hidden">
+        <section aria-label="Map" className="order-1 h-[55vh] md:order-2 md:h-auto md:min-h-0">
           {mapArea}
         </section>
         <aside
           aria-label="Network editor"
-          className="order-2 border-foreground/30 md:order-1 md:overflow-y-auto md:border-r"
+          className="order-2 min-h-0 border-foreground/30 md:order-1 md:overflow-y-auto md:border-r"
         >
           {panel}
         </aside>

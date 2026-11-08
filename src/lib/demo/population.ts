@@ -1,3 +1,5 @@
+import type { Location } from "./types";
+
 /** How many people a clinic serves: a whole number from 1 to MAX_POPULATION. */
 
 export const MAX_POPULATION = 100_000_000;
@@ -35,4 +37,16 @@ export function formatPopulation(n: number): string {
 /** "1 person", "12,400 people" */
 export function peopleLabel(n: number): string {
   return `${formatPopulation(n)} ${n === 1 ? "person" : "people"}`;
+}
+
+export function totalClinicPopulation(locations: readonly Location[]): number {
+  return locations.reduce(
+    (total, location) => (location.kind === "clinic" ? total + (location.population ?? 0) : total),
+    0,
+  );
+}
+
+export function formatPeopleHours(value: number): string {
+  const thousands = value / 1000;
+  return `${thousands.toLocaleString("en-US", { maximumFractionDigits: 1 })}k people-hours`;
 }

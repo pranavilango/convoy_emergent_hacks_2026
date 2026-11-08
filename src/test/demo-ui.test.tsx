@@ -105,6 +105,13 @@ describe("DemoApp without an API key", () => {
     render(<DemoApp />);
     expect(screen.getByRole("link", { name: "← Back to site" })).toHaveAttribute("href", "/");
   });
+
+  it("keeps the desktop page fixed while the network editor scrolls", () => {
+    const { container } = render(<DemoApp />);
+    expect(container.querySelector(".theme-night")).toHaveClass("md:overflow-hidden");
+    expect(screen.getByLabelText("Network editor")).toHaveClass("min-h-0", "md:overflow-y-auto");
+    expect(screen.getByRole("region", { name: "Map" })).toHaveClass("md:min-h-0");
+  });
 });
 
 describe("solar allocation analysis", () => {
@@ -160,23 +167,45 @@ describe("solar allocation analysis", () => {
       { units: 1, selected: [ids.c], weighted_hours: 15 },
       { units: 2, selected: [ids.w, ids.c], weighted_hours: 11.54 },
     ];
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(
-        new Response(
-          JSON.stringify({ allocation, steps, analysis: "Mwanza Clinic serves the most people." }),
-          { status: 200 },
-        ),
-      );
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          allocation,
+          steps,
+          analysis:
+            "- Mwanza Clinic: serves **1,200 people**.\n- Central Store: supplies the clinic.",
+        }),
+        { status: 200 },
+      ),
+    );
     vi.stubGlobal("fetch", fetchMock);
     fireEvent.click(analyzeButton);
 
     const dialog = await screen.findByRole("dialog", { name: "Network analysis" });
+    const whySites = within(dialog).getByRole("region", { name: "_Why these sites" });
+    expect(within(whySites).getAllByRole("listitem")[0]).toHaveTextContent(
+      "Mwanza Clinic: serves 1,200 people.",
+    );
+    expect(within(whySites).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(whySites).getByText("Mwanza Clinic:")).toHaveClass("text-white", "font-semibold");
+    expect(within(whySites).getByText("1,200 people")).toHaveClass("text-aqua", "font-semibold");
+    expect(within(dialog).getByText("People affected")).toBeInTheDocument();
+    expect(within(dialog).getAllByText("1,200 people").length).toBeGreaterThan(0);
+    expect(within(dialog).getByText("Hours saved per person")).toBeInTheDocument();
+    expect(within(dialog).getByText("10.1 h")).toBeInTheDocument();
+    expect(within(dialog).getByText("12.1k people-hours")).toBeInTheDocument();
     expect(
-      await within(dialog).findByText("Mwanza Clinic serves the most people."),
+      within(dialog).getByText(/21\.6 h → 11\.5 h per person · 47% shorter/),
     ).toBeInTheDocument();
-    expect(within(dialog).getByText("−10.1 h")).toBeInTheDocument();
-    expect(within(dialog).getByText(/21\.6 h → 11\.5 h · 47% shorter/)).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        (_, element) =>
+          element?.tagName === "LI" &&
+          (element.textContent ?? "").includes(
+            "Model: population-weighted, averages departure times. Solar removes the grid-power limit, while staffing hours still apply.",
+          ),
+      ),
+    ).toBeInTheDocument();
     // Each chosen site: when it takes in medicines now (staffed 9–5, powered 8–4) and with solar,
     // people served, and where it's supplied from.
     const chosen = within(dialog).getByRole("region", { name: "_Chosen for solar" });
@@ -185,10 +214,9 @@ describe("solar allocation analysis", () => {
     expect(within(chosen).getAllByText(/Grid power 08:00–16:00 \(8 h a day\)/)).toHaveLength(2);
     expect(within(chosen).getByText(/Serves 1,200 people/)).toBeInTheDocument();
     expect(within(chosen).getByText(/From Dar Port · \d+ km/)).toBeInTheDocument();
-    // What each unit buys.
-    const curve = within(dialog).getByRole("region", { name: "_What each solar unit buys" });
-    expect(within(curve).getAllByRole("listitem")).toHaveLength(2);
-    expect(within(curve).getByText("15.0 h")).toBeInTheDocument();
+    expect(
+      within(dialog).queryByRole("region", { name: "_What each solar unit buys" }),
+    ).not.toBeInTheDocument();
     // The popup never names the search strategy.
     expect(dialog.textContent).not.toMatch(/solver|exact|greedy/i);
 
@@ -206,7 +234,9 @@ describe("solar allocation analysis", () => {
     // Closing keeps the result to reopen…
     fireEvent.click(screen.getByRole("button", { name: "Close network analysis" }));
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.getByText("Last result: 2 sites lit on the map, −10.1 h")).toBeInTheDocument();
+    expect(
+      screen.getByText("Last result: 2 sites lit on the map, 12.1k people-hours saved"),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "View result" }));
     expect(screen.getByRole("dialog", { name: "Network analysis" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close network analysis" }));
@@ -575,7 +605,7 @@ describe("AnalysisText", () => {
           "### Why these sites",
           "",
           "*   **Central Store:** the main hub.",
-          "*   Mwanza Clinic serves *48,000* people.",
+          "*   Mwanza Clinic: serves **48,000** people.",
           "",
           "---",
           "",
@@ -590,8 +620,8 @@ describe("AnalysisText", () => {
     const [bullets, steps] = screen.getAllByRole("list");
     expect(within(bullets!).getAllByRole("listitem")).toHaveLength(2);
     expect(within(steps!).getAllByRole("listitem")).toHaveLength(2);
-    expect(screen.getByText("Central Store:").tagName).toBe("STRONG");
-    expect(screen.getByText("48,000").tagName).toBe("EM");
+    expect(screen.getByText("Central Store:")).toHaveClass("text-white", "font-semibold");
+    expect(screen.getByText("48,000")).toHaveClass("text-aqua", "font-semibold");
     expect(screen.getByRole("separator")).toBeInTheDocument();
     expect(screen.getByText("<b>not html</b>")).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/###|\*\*/);

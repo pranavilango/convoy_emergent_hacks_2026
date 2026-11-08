@@ -69,7 +69,11 @@ function blocks(text: string): ReactNode[] {
       case "rule":
         return <hr key={i} className="border-foreground/20" />;
       case "list": {
-        const items = block.items.map((item, j) => <li key={j}>{inline(item)}</li>);
+        const items = block.items.map((item, j) => (
+          <li key={j} className="marker:text-aqua">
+            {listItem(item)}
+          </li>
+        ));
         return block.ordered ? (
           <ol key={i} className="list-decimal space-y-1 pl-5">
             {items}
@@ -86,6 +90,29 @@ function blocks(text: string): ReactNode[] {
   });
 }
 
+function listItem(text: string): ReactNode[] {
+  const markdownLabel = text.match(/^\*\*(.+?):\*\*\s*(.*)$/);
+  if (markdownLabel) {
+    return [
+      <strong key="label" className="font-semibold text-white">
+        {markdownLabel[1]}:
+      </strong>,
+      ...inline(markdownLabel[2] ?? ""),
+    ];
+  }
+
+  const colon = text.indexOf(":");
+  if (colon < 1) return inline(text);
+
+  const label = text.slice(0, colon).trim();
+  return [
+    <strong key="label" className="font-semibold text-white">
+      {label}:
+    </strong>,
+    ...inline(text.slice(colon + 1)),
+  ];
+}
+
 /** **bold**, *italic* / _italic_, and `code`; anything else stays literal text. */
 function inline(text: string): ReactNode[] {
   const out: ReactNode[] = [];
@@ -95,7 +122,12 @@ function inline(text: string): ReactNode[] {
     if (match.index > last) out.push(text.slice(last, match.index));
     const [, bold, code, em1, em2] = match;
     const key = match.index;
-    if (bold !== undefined) out.push(<strong key={key}>{bold}</strong>);
+    if (bold !== undefined)
+      out.push(
+        <strong key={key} className="font-semibold text-aqua">
+          {bold}
+        </strong>,
+      );
     else if (code !== undefined)
       out.push(
         <span key={key} className="font-mono text-xs">
